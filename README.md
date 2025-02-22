@@ -1,12 +1,12 @@
 # System Initialization Script
 
-A comprehensive bash script for initializing a new Linux system (Debian/Ubuntu/RHEL/CentOS), setting up basic security configurations, and installing essential services.
+A comprehensive bash script for initializing a new Linux system (Debian/Ubuntu), setting up basic security configurations, and installing essential services.
 
 ## Features
 
 1. **Package Manager Detection**
    - Automatically detects and uses apt/dnf/yum
-   - Supports Debian, Ubuntu, RHEL, and CentOS systems
+   - Supports Debian, Ubuntu systems
 
 2. **System Cleanup and Update**
    - Removes snap packages (Ubuntu only)
@@ -18,7 +18,6 @@ A comprehensive bash script for initializing a new Linux system (Debian/Ubuntu/R
    - Configures secure SSH settings
    - Disables root login and password authentication
    - Changes default SSH port
-   - Configures firewall rules (for RHEL/CentOS)
 
 4. **User Management**
    - Creates new user with home directory
@@ -44,8 +43,6 @@ A comprehensive bash script for initializing a new Linux system (Debian/Ubuntu/R
 - One of the supported Linux distributions:
   - Debian
   - Ubuntu
-  - RHEL
-  - CentOS
 
 ## Usage
 
@@ -109,7 +106,6 @@ The script will prompt for:
    - The script automatically detects and adapts to the system
 
 5. **Firewall**
-   - For RHEL/CentOS, firewall rules are automatically updated
    - For Debian/Ubuntu, you may need to configure UFW separately
 
 ## Troubleshooting

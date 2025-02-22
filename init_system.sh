@@ -31,16 +31,8 @@ if [ -f /etc/os-release ]; then
         PKG_MANAGER="apt"
         PKG_UPDATE="apt update && apt upgrade -y"
         PKG_INSTALL="apt install -y"
-    elif command -v dnf >/dev/null 2>&1; then
-        PKG_MANAGER="dnf"
-        PKG_UPDATE="dnf update -y"
-        PKG_INSTALL="dnf install -y"
-    elif command -v yum >/dev/null 2>&1; then
-        PKG_MANAGER="yum"
-        PKG_UPDATE="yum update -y"
-        PKG_INSTALL="yum install -y"
     else
-        echo "No supported package manager found"
+        echo "No supported package manager found (only apt is supported)"
         exit 1
     fi
 else
@@ -87,16 +79,7 @@ disable_hibernation() {
 setup_ssh() {
     {
         if ! systemctl is-active --quiet sshd; then
-            if [ "$PKG_MANAGER" = "apt" ]; then
-                $PKG_INSTALL openssh-server
-            else
-                $PKG_INSTALL openssh-server
-                # For RHEL/CentOS, also open firewall port
-                if command -v firewall-cmd >/dev/null 2>&1; then
-                    firewall-cmd --permanent --add-service=ssh
-                    firewall-cmd --reload
-                fi
-            fi
+            $PKG_INSTALL openssh-server
             systemctl enable sshd
             systemctl start sshd
         fi
@@ -115,17 +98,8 @@ create_user() {
         # Set password
         passwd "$new_username"
         
-        # Add to sudo/wheel group based on OS
-        if [ "$PKG_MANAGER" = "apt" ]; then
-            usermod -aG sudo "$new_username"
-        else
-            usermod -aG wheel "$new_username"
-            # Ensure wheel group has sudo privileges
-            if [ ! -f /etc/sudoers.d/wheel ]; then
-                echo "%wheel  ALL=(ALL)       ALL" > /etc/sudoers.d/wheel
-                chmod 440 /etc/sudoers.d/wheel
-            fi
-        fi
+        # Add to sudo group
+        usermod -aG sudo "$new_username"
         
         # Set shell
         usermod -s /bin/bash "$new_username"
@@ -181,13 +155,6 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 AllowUsers $new_username
 EOF
 
-        # Update firewall rules for RHEL/CentOS
-        if command -v firewall-cmd >/dev/null 2>&1; then
-            firewall-cmd --permanent --remove-service=ssh
-            firewall-cmd --permanent --add-port="$ssh_port/tcp"
-            firewall-cmd --reload
-        fi
-
         systemctl restart sshd
     } || handle_error "Configure SSH" "$?"
 }
@@ -195,30 +162,17 @@ EOF
 # 7. Install Docker
 install_docker() {
     {
-        if [ "$PKG_MANAGER" = "apt" ]; then
-            # Debian/Ubuntu installation
-            $PKG_INSTALL apt-transport-https ca-certificates curl software-properties-common
+        # Debian/Ubuntu installation
+        $PKG_INSTALL apt-transport-https ca-certificates curl software-properties-common
 
-            # Add Docker's official GPG key
-            curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+        # Add Docker's official GPG key
+        curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
-            # Add Docker repository
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]') $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+        # Add Docker repository
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]') $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-            $PKG_UPDATE
-            $PKG_INSTALL docker-ce docker-ce-cli containerd.io
-        else
-            # RHEL/CentOS installation
-            $PKG_INSTALL yum-utils
-            yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-            $PKG_INSTALL docker-ce docker-ce-cli containerd.io
-
-            # Configure firewall
-            if command -v firewall-cmd >/dev/null 2>&1; then
-                firewall-cmd --permanent --add-service=docker
-                firewall-cmd --reload
-            fi
-        fi
+        $PKG_UPDATE
+        $PKG_INSTALL docker-ce docker-ce-cli containerd.io
 
         # Create docker config directory
         mkdir -p /etc/docker
@@ -242,17 +196,9 @@ EOF
         usermod -aG docker "$new_username"
 
         # Install Docker Compose
-        if [ "$PKG_MANAGER" = "apt" ]; then
-            # For Debian/Ubuntu
-            $PKG_INSTALL docker-compose-plugin
-            # Create symbolic link for backward compatibility
-            ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
-        else
-            # For RHEL/CentOS
-            $PKG_INSTALL docker-compose-plugin
-            # Create symbolic link for backward compatibility
-            ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
-        fi
+        $PKG_INSTALL docker-compose-plugin
+        # Create symbolic link for backward compatibility
+        ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
 
         # Verify installations
         echo "Verifying Docker and Docker Compose installations..."
