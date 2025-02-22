@@ -45,8 +45,8 @@ get_user_choices() {
     echo "System initialization configuration"
     echo "----------------------------------------"
     
-    # Choice 1/4: Remove snap
-    echo "Choice (1/4): Remove snap?"
+    # Choice 1/5: Remove snap
+    echo "Choice (1/5): Remove snap?"
     if [[ "$OS" == *"Ubuntu"* ]]; then
         echo "Do you want to remove snap? (y/n)"
         read -r remove_snap_choice
@@ -54,29 +54,37 @@ get_user_choices() {
         remove_snap_choice="n"
     fi
 
-    # Choice 2/4: Create new user
-    echo -e "\nChoice (2/4): User creation"
+    # Choice 2/5: Create new user
+    echo -e "\nChoice (2/5): User creation"
     echo "Do you want to create a new user? (y/n)"
     read -r create_user_choice
     
     if [ "$create_user_choice" = "y" ]; then
         echo "Enter new username:"
         read -r new_username
-        
-        # Choice 3/4: SSH key
-        echo -e "\nChoice (3/4): SSH configuration"
-        echo "Do you want to add SSH public key? (y/n)"
-        read -r add_ssh_key_choice
-        
-        if [ "$add_ssh_key_choice" = "y" ]; then
-            echo "You will be prompted to enter the SSH key later"
-        fi
-        
-        # Choice 4/4: SSH port
-        echo -e "\nChoice (4/4): SSH port"
+    fi
+
+    # Choice 3/5: SSH key
+    echo -e "\nChoice (3/5): SSH configuration"
+    echo "Do you want to add SSH public key? (y/n)"
+    read -r add_ssh_key_choice
+    
+    if [ "$add_ssh_key_choice" = "y" ] && [ "$create_user_choice" != "y" ]; then
+        echo "Note: You need to create a user to add SSH key"
+        add_ssh_key_choice="n"
+    fi
+
+    # Choice 4/5: SSH port
+    if [ "$create_user_choice" = "y" ]; then
+        echo -e "\nChoice (4/5): SSH port"
         echo "Enter new SSH port (recommended: greater than 1024):"
         read -r ssh_port
     fi
+
+    # Choice 5/5: Install Docker
+    echo -e "\nChoice (5/5): Docker Installation"
+    echo "Do you want to install Docker? (y/n)"
+    read -r install_docker_choice
     
     echo -e "\nConfiguration complete. Starting system initialization..."
     echo "----------------------------------------"
@@ -215,17 +223,29 @@ EOF
 # 7. Install Docker
 install_docker() {
     {
-        # Debian/Ubuntu installation
-        $PKG_INSTALL apt-transport-https ca-certificates curl software-properties-common
+        # Remove old versions if they exist
+        for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
+            apt-get remove $pkg 2>/dev/null || true
+        done
+
+        # Install prerequisites
+        $PKG_INSTALL apt-transport-https ca-certificates curl gnupg lsb-release
 
         # Add Docker's official GPG key
-        curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+        install -m 0755 -d /etc/apt/keyrings
+        curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        chmod a+r /etc/apt/keyrings/docker.gpg
 
         # Add Docker repository
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]') $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+        echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]') \
+            $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
+        # Update package list
         $PKG_UPDATE
-        $PKG_INSTALL docker-ce docker-ce-cli containerd.io
+
+        # Install Docker packages
+        $PKG_INSTALL docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
         # Create docker config directory
         mkdir -p /etc/docker
@@ -245,13 +265,13 @@ EOF
         systemctl enable docker
         systemctl start docker
 
-        # Add new user to docker group
-        usermod -aG docker "$new_username"
+        # Add new user to docker group if user was created
+        if [ "$create_user_choice" = "y" ]; then
+            usermod -aG docker "$new_username"
+        fi
 
-        # Install Docker Compose
-        $PKG_INSTALL docker-compose-plugin
-        # Create symbolic link for backward compatibility
-        ln -sf /usr/libexec/docker/cli-plugins/docker-compose /usr/local/bin/docker-compose
+        # Create symbolic link for docker-compose
+        ln -sf $(which docker-compose) /usr/local/bin/docker-compose
 
         # Verify installations
         echo "Verifying Docker and Docker Compose installations..."
@@ -274,7 +294,9 @@ main() {
         configure_ssh
     fi
     
-    install_docker
+    if [ "$install_docker_choice" = "y" ]; then
+        install_docker
+    fi
 
     echo "System initialization completed!"
     if [ "$create_user_choice" = "y" ]; then
