@@ -40,20 +40,74 @@ else
     exit 1
 fi
 
+# Configuration choices
+get_user_choices() {
+    echo "System initialization configuration"
+    echo "----------------------------------------"
+    
+    # Choice 1/4: Remove snap
+    echo "Choice (1/4): Remove snap?"
+    if [[ "$OS" == *"Ubuntu"* ]]; then
+        echo "Do you want to remove snap? (y/n)"
+        read -r remove_snap_choice
+    else
+        remove_snap_choice="n"
+    fi
+
+    # Choice 2/4: Create new user
+    echo -e "\nChoice (2/4): User creation"
+    echo "Do you want to create a new user? (y/n)"
+    read -r create_user_choice
+    
+    if [ "$create_user_choice" = "y" ]; then
+        echo "Enter new username:"
+        read -r new_username
+        
+        # Choice 3/4: SSH key
+        echo -e "\nChoice (3/4): SSH configuration"
+        echo "Do you want to add SSH public key? (y/n)"
+        read -r add_ssh_key_choice
+        
+        if [ "$add_ssh_key_choice" = "y" ]; then
+            echo "You will be prompted to enter the SSH key later"
+        fi
+        
+        # Choice 4/4: SSH port
+        echo -e "\nChoice (4/4): SSH port"
+        echo "Enter new SSH port (recommended: greater than 1024):"
+        read -r ssh_port
+    fi
+    
+    echo -e "\nConfiguration complete. Starting system initialization..."
+    echo "----------------------------------------"
+}
+
 # 1. Remove snap (Ubuntu only)
 remove_snap() {
     {
-        if [[ "$OS" == *"Ubuntu"* ]]; then
-            echo "Ubuntu detected. Do you want to remove snap? (y/n)"
-            read -r remove_snap_confirm
-            if [ "$remove_snap_confirm" = "y" ]; then
-                snap list | awk 'NR>1 {print $1}' | xargs -I {} sudo snap remove {}
-                apt autoremove --purge snapd -y
-                rm -rf ~/snap/
-                rm -rf /snap
-                rm -rf /var/snap
-                rm -rf /var/lib/snapd
+        if [[ "$OS" == *"Ubuntu"* && "$remove_snap_choice" = "y" ]]; then
+            echo "Removing snap packages..."
+            # First remove LXD if installed
+            if snap list | grep -q lxd; then
+                echo "Removing LXD..."
+                snap remove lxd
             fi
+            
+            # Remove all snap packages
+            echo "Removing all snap packages..."
+            snap list | awk 'NR>1 {print $1}' | xargs -I {} sudo snap remove {}
+            
+            # Remove snapd
+            apt autoremove --purge snapd -y
+            
+            # Clean up snap directories
+            rm -rf ~/snap/
+            rm -rf /snap
+            rm -rf /var/snap
+            rm -rf /var/lib/snapd
+            
+            # Prevent snap from being installed automatically
+            apt-mark hold snapd
         fi
     } || handle_error "Remove Snap" "$?"
 }
@@ -89,9 +143,6 @@ setup_ssh() {
 # 5. Create new user
 create_user() {
     {
-        echo "Enter new username:"
-        read -r new_username
-
         # Create user with home directory
         useradd -m "$new_username"
         
@@ -104,15 +155,17 @@ create_user() {
         # Set shell
         usermod -s /bin/bash "$new_username"
         
-        # Create .ssh directory
-        mkdir -p "/home/$new_username/.ssh"
-        chmod 700 "/home/$new_username/.ssh"
-        touch "/home/$new_username/.ssh/authorized_keys"
-        chmod 600 "/home/$new_username/.ssh/authorized_keys"
-        chown -R "$new_username:$new_username" "/home/$new_username/.ssh"
+        if [ "$add_ssh_key_choice" = "y" ]; then
+            # Create .ssh directory
+            mkdir -p "/home/$new_username/.ssh"
+            chmod 700 "/home/$new_username/.ssh"
+            touch "/home/$new_username/.ssh/authorized_keys"
+            chmod 600 "/home/$new_username/.ssh/authorized_keys"
+            chown -R "$new_username:$new_username" "/home/$new_username/.ssh"
 
-        echo "Enter SSH public key (paste and press Enter, then Ctrl+D when done):"
-        cat > "/home/$new_username/.ssh/authorized_keys"
+            echo "Enter SSH public key (paste and press Enter, then Ctrl+D when done):"
+            cat > "/home/$new_username/.ssh/authorized_keys"
+        fi
     } || handle_error "Create User" "$?"
 }
 
@@ -209,17 +262,25 @@ EOF
 
 # Main program
 main() {
+    get_user_choices
+    
     remove_snap
     system_update
     disable_hibernation
     setup_ssh
-    create_user
-    configure_ssh
+    
+    if [ "$create_user_choice" = "y" ]; then
+        create_user
+        configure_ssh
+    fi
+    
     install_docker
 
     echo "System initialization completed!"
-    echo "Please use SSH port $ssh_port and username $new_username to login"
-    echo "Remember to save the SSH config backup file: /etc/ssh/sshd_config.backup"
+    if [ "$create_user_choice" = "y" ]; then
+        echo "Please use SSH port $ssh_port and username $new_username to login"
+        echo "Remember to save the SSH config backup file: /etc/ssh/sshd_config.backup"
+    fi
 
     # Check if any steps failed and report
     if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
