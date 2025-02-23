@@ -38,7 +38,7 @@ set_timezone() {
         echo "[INFO] Detecting timezone based on IP..."
         detected_tz=$(curl -s --max-time 5 http://ip-api.com/line/?fields=timezone || true)
         
-        # 显示时区选项
+        # Display timezone options
         echo "Choose an option:"
         echo "1. Keep current system timezone [$current_tz]"
         if [ -n "$detected_tz" ] && timedatectl list-timezones | grep -q "^$detected_tz$"; then
@@ -280,7 +280,7 @@ configure_apt_sources() {
         echo "[INFO] Configuring APT sources..."
         
         if [[ "$OS" == *"Debian"* || "$OS" == *"Ubuntu"* ]] && [ -n "$MIRROR_URL" ]; then
-            # 创建备份目录
+            # Create backup directory
             local backup_dir="/etc/apt/backups"
             mkdir -p "$backup_dir"
             
@@ -293,7 +293,7 @@ configure_apt_sources() {
                 fi
                 echo "[SUCCEED] Backed up original sources.list to $backup_file"
                 
-                # 清理旧备份
+                # Clean up old backups
                 cleanup_backups
             fi
             
@@ -303,9 +303,9 @@ configure_apt_sources() {
                 
                 echo "[INFO] Configuring Debian sources with $MIRROR_NAME ($MIRROR_URL)"
                 
-                # 根据Debian版本配置不同的源
+                # Configure different sources based on Debian version
                 if [ "$VERSION_NUM" -ge 12 ]; then
-                    # Debian 12 (Bookworm) 及以上版本包含 non-free-firmware
+                    # Debian 12 (Bookworm) and above includes non-free-firmware
                     cat > /etc/apt/sources.list << EOF
 # Debian $VERSION_CODE repository ($MIRROR_NAME)
 deb http://$MIRROR_URL $VERSION_CODE main contrib non-free non-free-firmware
@@ -314,7 +314,7 @@ deb http://$MIRROR_URL $VERSION_CODE-backports main contrib non-free non-free-fi
 deb http://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free non-free-firmware
 EOF
                 else
-                    # Debian 11 (Bullseye) 及以下版本
+                    # Debian 11 (Bullseye) and below
                     cat > /etc/apt/sources.list << EOF
 # Debian $VERSION_CODE repository ($MIRROR_NAME)
 deb http://$MIRROR_URL $VERSION_CODE main contrib non-free
@@ -337,17 +337,17 @@ deb http://$MIRROR_URL $VERSION_CODE-security main restricted universe multivers
 EOF
             fi
             
-            # 验证文件是否成功创建和写入
+            # Verify file creation and content
             if [ -f /etc/apt/sources.list ] && [ -s /etc/apt/sources.list ]; then
                 echo "[SUCCEED] APT sources configured for $OS"
                 echo "[SUCCEED] Using $MIRROR_NAME"
                 
-                # 测试新源可用性
+                # Test new source availability
                 if apt-get update -qq &>/dev/null; then
                     echo "[SUCCEED] APT sources update completed"
                 else
                     echo "[ERROR] Failed to update APT sources"
-                    # 恢复备份
+                    # Restore backup
                     cp "$backup_file" /etc/apt/sources.list
                     echo "[INFO] Restored original sources.list from backup"
                     return 1
@@ -422,7 +422,7 @@ setup_ssh() {
 # 5. Create new user
 create_user() {
     {
-        # 验证用户名
+        # Validate username
         local username_regex="^[a-z_][a-z0-9_-]*[$]?$"
         while true; do
             if [ -z "$new_username" ]; then
@@ -449,13 +449,13 @@ create_user() {
             return 1
         fi
         
-        # 设置密码策略
+        # Set password policy
         echo "[INFO] Setting password policy..."
         if ! apt-get install -y libpam-pwquality; then
             echo "[WARN] Failed to install password quality checker"
         fi
         
-        # 设置密码
+        # Set password
         while true; do
             if passwd "$new_username"; then
                 break
@@ -464,12 +464,12 @@ create_user() {
             fi
         done
         
-        # 添加到sudo组
+        # Add to sudo group
         if ! usermod -aG sudo "$new_username"; then
             echo "[WARN] Failed to add user to sudo group"
         fi
         
-        # 配置SSH
+        # Configure SSH
         if [ "$add_ssh_key_choice" = "y" ]; then
             setup_ssh_for_user "$new_username"
         fi
@@ -482,13 +482,13 @@ setup_ssh_for_user() {
     local username=$1
     local ssh_dir="/home/$username/.ssh"
     
-    # 创建并设置.ssh目录权限
+    # Create and set .ssh directory permissions
     if ! mkdir -p "$ssh_dir"; then
         echo "[ERROR] Failed to create SSH directory"
         return 1
     fi
     
-    # 设置正确的权限
+    # Set correct permissions
     chmod 700 "$ssh_dir"
     touch "$ssh_dir/authorized_keys"
     chmod 600 "$ssh_dir/authorized_keys"
@@ -500,7 +500,7 @@ setup_ssh_for_user() {
         return 1
     fi
     
-    # 验证SSH密钥格式
+    # Verify SSH key format
     if ! ssh-keygen -l -f "$ssh_dir/authorized_keys" &>/dev/null; then
         echo "[ERROR] Invalid SSH key format"
         return 1
@@ -510,7 +510,7 @@ setup_ssh_for_user() {
 # 6. Configure SSH
 configure_ssh() {
     {
-        # 使用之前在 get_user_choices 中获取的 ssh_port
+        # Use previously obtained ssh_port
         if [ -z "$ssh_port" ]; then
             echo "[ERROR] SSH port not set"
             return 1
@@ -563,41 +563,41 @@ install_docker() {
     {
         echo "[INFO] Starting Docker installation..."
         
-        # 检查系统要求
+        # Check system requirements
         if ! check_docker_prerequisites; then
             return 1
         fi
         
-        # 清理旧版本
+        # Clean up old versions
         remove_old_docker
         
-        # 安装新版本
+        # Install new version
         if ! install_new_docker; then
             return 1
         fi
         
-        # 配置Docker
+        # Configure Docker
         if ! configure_docker; then
             return 1
         fi
         
-        # 配置用户权限
+        # Configure user permissions
         configure_docker_permissions
         
-        # 验证安装
+        # Verify installation
         verify_docker_installation
         
     } || handle_error "Install Docker" "$?"
 }
 
 check_docker_prerequisites() {
-    # 检查系统内存
+    # Check system memory
     local total_mem=$(free -m | awk '/^Mem:/{print $2}')
     if [ "$total_mem" -lt 2048 ]; then
         echo "[WARN] Less than 2GB RAM available. Docker might not perform optimally."
     fi
     
-    # 检查磁盘空间
+    # Check disk space
     local free_space=$(df -m /var | awk 'NR==2 {print $4}')
     if [ "$free_space" -lt 20480 ]; then
         echo "[ERROR] Insufficient disk space. At least 20GB free space required."
@@ -608,17 +608,17 @@ check_docker_prerequisites() {
 }
 
 configure_docker_permissions() {
-    # 为所有需要访问Docker的用户配置权限
+    # Configure permissions for all users needing access to Docker
     if ! getent group docker >/dev/null; then
         groupadd docker
     fi
     
-    # 如果创建了新用户，将其添加到docker组
+    # If a new user was created, add it to the docker group
     if [ -n "$new_username" ]; then
         usermod -aG docker "$new_username"
     fi
     
-    # 询问是否为其他用户配置Docker权限
+    # Ask whether to configure Docker permissions for other users
     read -p "Do you want to configure Docker permissions for other users? (y/n): " configure_others
     if [ "$configure_others" = "y" ]; then
         while true; do
@@ -638,14 +638,14 @@ configure_docker_permissions() {
 install_git() {
     {
         if [ "$install_git_choice" = "y" ]; then
-            # 检查是否已安装Git
+            # Check if Git is already installed
             if command -v git &>/dev/null; then
                 echo "Git is already installed. Checking for updates..."
                 
-                # 获取当前版本
+                # Get current version
                 current_version=$(git --version | awk '{print $3}')
                 
-                # 检查并更新
+                # Check and update
                 if apt list --upgradable 2>/dev/null | grep -q "^git/"; then
                     echo "Upgrading Git..."
                     apt install -y --only-upgrade git
@@ -660,7 +660,7 @@ install_git() {
                 echo "Git installed successfully. Version: $(git --version)"
             fi
             
-            # 配置Git全局设置
+            # Configure Git global settings
             if [ -n "$new_username" ]; then
                 echo "Do you want to configure Git for $new_username? (y/n)"
                 read -r configure_git
@@ -674,14 +674,14 @@ install_git() {
     } || handle_error "Install Git" "$?"
 }
 
-# 在脚本开始处添加
+# Add this function at the beginning of the script
 load_config() {
     local config_file="/etc/system-init.conf"
     if [ -f "$config_file" ]; then
         # shellcheck source=/dev/null
         source "$config_file"
     else
-        # 创建默认配置
+        # Create default configuration
         cat > "$config_file" << EOF
 # System initialization configuration
 MAX_RETRIES=3
@@ -694,25 +694,25 @@ EOF
     fi
 }
 
-# 清理旧备份
+# Clean up old backups
 cleanup_backups() {
     local backup_dir="/etc/apt/backups"
     find "$backup_dir" -name "sources.list.backup.*" -mtime +${BACKUP_RETENTION_DAYS} -delete
 }
 
-# 检查系统资源
+# Check system resources
 check_system_resources() {
     local min_memory=512  # MB
     local min_disk=5120   # MB
     
-    # 检查内存
+    # Check memory
     local total_mem=$(free -m | awk '/^Mem:/{print $2}')
     if [ "$total_mem" -lt "$min_memory" ]; then
         echo "[ERROR] Insufficient memory: ${total_mem}MB (minimum: ${min_memory}MB)"
         return 1
     fi
     
-    # 检查磁盘空间
+    # Check disk space
     local free_space=$(df -m / | awk 'NR==2 {print $4}')
     if [ "$free_space" -lt "$min_disk" ]; then
         echo "[ERROR] Insufficient disk space: ${free_space}MB (minimum: ${min_disk}MB)"
@@ -722,7 +722,7 @@ check_system_resources() {
     return 0
 }
 
-# 验证网络连接
+# Check network connectivity
 check_network() {
     local test_hosts=("8.8.8.8" "1.1.1.1")
     local success=false
@@ -742,18 +742,18 @@ check_network() {
     return 0
 }
 
-# 备份管理
+# Backup management
 manage_backups() {
     local backup_dir=$1
     local retention_days=${BACKUP_RETENTION_DAYS:-30}
     
-    # 创建备份目录
+    # Create backup directory
     mkdir -p "$backup_dir"
     
-    # 清理旧备份
+    # Clean up old backups
     find "$backup_dir" -type f -mtime +"$retention_days" -delete
     
-    # 压缩旧备份
+    # Compress old backups
     find "$backup_dir" -type f -mtime +7 -not -name "*.gz" -exec gzip {} \;
 }
 
@@ -854,19 +854,19 @@ main() {
     # Add security check
     check_security_requirements
     
-    # 初始化变量和日志
+    # Initialize variables and log
     ERROR_LOG="$(dirname "$0")/error.log"
-    > "$ERROR_LOG"  # 清空错误日志
+    > "$ERROR_LOG"  # Clear error log
     declare -a FAILED_STEPS=()
     
-    # 加载配置
+    # Load configuration
     load_config
     
-    # 创建临时目录
+    # Create temporary directory
     TEMP_DIR=$(mktemp -d)
     trap 'rm -rf "$TEMP_DIR"' EXIT
     
-    # 执行初始化步骤
+    # Execute initialization steps
     local steps=(
         "set_timezone"
         "get_user_choices"
@@ -878,38 +878,38 @@ main() {
         "setup_ssh"
     )
     
-    # 条件步骤
+    # Conditional steps
     [ "$create_user_choice" = "y" ] && steps+=("create_user" "configure_ssh")
     [ "$install_docker_choice" = "y" ] && steps+=("install_docker")
     
-    # 执行步骤
+    # Execute steps
     for step in "${steps[@]}"; do
         echo "[INFO] Executing step: $step"
         if ! $step; then
             FAILED_STEPS+=("$step")
             echo "[ERROR] Step $step failed"
-            # 根据错误处理策略决定是否继续
+            # Based on error handling strategy, whether to continue
             if [ "${STOP_ON_ERROR:-false}" = "true" ]; then
                 break
             fi
         fi
     done
 
-    # 总结报告
+    # Summary report
     echo -e "\nSystem initialization completed!"
     if [ "$create_user_choice" = "y" ]; then
         echo "Please use SSH port $ssh_port and username $new_username to login"
         echo "Remember to save the SSH config backup file: /etc/ssh/sshd_config.backup"
     fi
 
-    # 检查失败步骤
+    # Check failed steps
     if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
         echo -e "\nWarning: The following steps encountered errors:"
         printf '%s\n' "${FAILED_STEPS[@]}"
         echo "Please check $ERROR_LOG for detailed error messages"
         exit 1
     else
-        # 清理空的错误日志
+        # Clean up empty error log
         if [ ! -s "$ERROR_LOG" ]; then
             rm -f "$ERROR_LOG"
             echo -e "\nNo errors occurred during initialization"

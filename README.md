@@ -125,4 +125,4 @@ The script will prompt for:
 
 ## Log
 
-2025-02-23 Test on Ubuntu 20.04 LTS
+2025-02-23 Tested on Ubuntu 20.04 LTS
