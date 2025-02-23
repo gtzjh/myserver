@@ -108,13 +108,8 @@ else
     exit 1
 fi
 
-# Configuration choices
-get_user_choices() {
-    echo "System initialization configuration"
-    echo "----------------------------------------"
-    
-    # Choice 1/7: Select APT mirror
-    echo "Choice (1/7): APT Mirror Selection"
+# Select APT mirror function
+select_apt_mirror() {
     if [[ "$OS" == *"Debian"* || "$OS" == *"Ubuntu"* ]]; then
         # Display current mirror
         echo -e "${BLUE}[INFO]${NC} Current APT mirror configuration:"
@@ -132,7 +127,7 @@ get_user_choices() {
             echo "3) Aliyun Mirror (阿里云源)"
         fi
         echo "n) Keep current mirror"
-        read -r -p "Enter your choice (1-3/n) [default: n]: " mirror_choice
+        read -r -p "Enter your choice (1|2|3|n) [default: n]: " mirror_choice
         mirror_choice=${mirror_choice:-n}
         
         case $mirror_choice in
@@ -168,6 +163,16 @@ get_user_choices() {
         esac
         [ -n "$MIRROR_URL" ] && echo "Selected: $MIRROR_NAME"
     fi
+}
+
+# Configuration choices
+get_user_choices() {
+    echo "System initialization configuration"
+    echo "----------------------------------------"
+    
+    # Choice 1/7: Select APT mirror
+    echo "Choice (1/7): APT Mirror Selection"
+    select_apt_mirror
 
     # Choice 2/7: Remove snap
     echo -e "\nChoice (2/7): Remove snap?"
@@ -494,44 +499,57 @@ configure_apt_sources() {
     {
         echo -e "${BLUE}[INFO]${NC} Configuring APT sources..."
         
-        if [[ "$OS" == *"Debian"* ]]; then
+        if [[ "$OS" == *"Debian"* || "$OS" == *"Ubuntu"* ]]; then
             # Backup original sources
             cp /etc/apt/sources.list /etc/apt/sources.list.backup
             
-            VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
-            VERSION_NUM=$(. /etc/os-release && echo "$VERSION_ID")
-            
-            echo -e "${BLUE}[INFO]${NC} Using $MIRROR_NAME ($MIRROR_URL)"
-            
-            # 根据Debian版本配置不同的源
-            if [ "$VERSION_NUM" -ge 12 ]; then
-                # Debian 12 (Bookworm) 及以上版本包含 non-free-firmware
-                cat > /etc/apt/sources.list << EOF
+            if [[ "$OS" == *"Debian"* ]]; then
+                VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
+                VERSION_NUM=$(. /etc/os-release && echo "$VERSION_ID")
+                
+                echo -e "${BLUE}[INFO]${NC} Using $MIRROR_NAME ($MIRROR_URL)"
+                
+                # 根据Debian版本配置不同的源
+                if [ "$VERSION_NUM" -ge 12 ]; then
+                    # Debian 12 (Bookworm) 及以上版本包含 non-free-firmware
+                    cat > /etc/apt/sources.list << EOF
 # Debian $VERSION_CODE repository ($MIRROR_NAME)
-deb https://$MIRROR_URL/debian/ $VERSION_CODE main contrib non-free non-free-firmware
-deb https://$MIRROR_URL/debian/ $VERSION_CODE-updates main contrib non-free non-free-firmware
-deb https://$MIRROR_URL/debian/ $VERSION_CODE-backports main contrib non-free non-free-firmware
-deb https://$MIRROR_URL/debian-security/ $VERSION_CODE-security main contrib non-free non-free-firmware
+deb https://$MIRROR_URL $VERSION_CODE main contrib non-free non-free-firmware
+deb https://$MIRROR_URL $VERSION_CODE-updates main contrib non-free non-free-firmware
+deb https://$MIRROR_URL $VERSION_CODE-backports main contrib non-free non-free-firmware
+deb https://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free non-free-firmware
 EOF
-            else
-                # Debian 11 (Bullseye) 及以下版本
-                cat > /etc/apt/sources.list << EOF
+                else
+                    # Debian 11 (Bullseye) 及以下版本
+                    cat > /etc/apt/sources.list << EOF
 # Debian $VERSION_CODE repository ($MIRROR_NAME)
-deb https://$MIRROR_URL/debian/ $VERSION_CODE main contrib non-free
-deb https://$MIRROR_URL/debian/ $VERSION_CODE-updates main contrib non-free
-deb https://$MIRROR_URL/debian/ $VERSION_CODE-backports main contrib non-free
-deb https://$MIRROR_URL/debian-security/ $VERSION_CODE-security main contrib non-free
+deb https://$MIRROR_URL $VERSION_CODE main contrib non-free
+deb https://$MIRROR_URL $VERSION_CODE-updates main contrib non-free
+deb https://$MIRROR_URL $VERSION_CODE-backports main contrib non-free
+deb https://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free
+EOF
+                fi
+            else  # Ubuntu
+                VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
+                
+                cat > /etc/apt/sources.list << EOF
+# Ubuntu $VERSION_CODE repository ($MIRROR_NAME)
+deb https://$MIRROR_URL $VERSION_CODE main restricted universe multiverse
+deb https://$MIRROR_URL $VERSION_CODE-updates main restricted universe multiverse
+deb https://$MIRROR_URL $VERSION_CODE-backports main restricted universe multiverse
+deb https://$MIRROR_URL $VERSION_CODE-security main restricted universe multiverse
 EOF
             fi
             
-            echo -e "${GREEN}[SUCCEED]${NC} APT sources configured for Debian $VERSION_NUM ($VERSION_CODE)"
+            echo -e "${GREEN}[SUCCEED]${NC} APT sources configured for $OS"
             echo -e "${GREEN}[SUCCEED]${NC} Using $MIRROR_NAME"
             echo -e "${GREEN}[SUCCEED]${NC} Old sources backed up to /etc/apt/sources.list.backup"
             
             # Update package lists
             apt update
+            
         else
-            echo -e "${YELLOW}[WARN]${NC} Not a Debian system, skipping APT source configuration"
+            echo -e "${YELLOW}[WARN]${NC} Unsupported system type, skipping APT source configuration"
         fi
         
     } || handle_error "Configure APT Sources" "$?"
