@@ -1,89 +1,5 @@
 #!/bin/bash
 
-# Set system timezone
-set_timezone() {
-    {
-        echo -e "${BLUE}[INFO]${NC} Checking system timezone..."
-        current_tz=$(timedatectl show --property=Timezone --value)
-        echo -e "Current system timezone: ${GREEN}$current_tz${NC}"
-        
-        # Detect timezone by IP
-        echo -e "${BLUE}[INFO]${NC} Detecting timezone based on IP..."
-        detected_tz=$(curl -s --max-time 5 http://ip-api.com/line/?fields=timezone || true)
-        
-        if [ -n "$detected_tz" ] && timedatectl list-timezones | grep -q "^$detected_tz$"; then
-            echo "Detected location timezone: $detected_tz"
-            echo "Choose an option:"
-            echo "1. Keep current system timezone [$current_tz]"
-            echo "2. Use detected timezone [$detected_tz]"
-            echo "3. Manually select timezone"
-            read -p "Enter choice (1-3): " tz_choice
-            
-            case $tz_choice in
-                2) new_timezone=$detected_tz ;;
-                3) manual_select=true ;;
-                *) return 0 ;;
-            esac
-        else
-            echo "Could not detect timezone automatically"
-            echo "Using default timezone: UTC"
-            new_timezone="UTC"
-            read -p "Would you like to manually select timezone? (y/n): " manual_select
-            if [ "$manual_select" = "y" ]; then
-                echo "Available timezones:"
-                timedatectl list-timezones
-                read -p "Enter your timezone (e.g., Asia/Shanghai): " new_timezone
-            fi
-        fi
-
-        # Set new timezone if selected
-        if [ -n "$new_timezone" ]; then
-            if timedatectl set-timezone "$new_timezone"; then
-                echo -e "${GREEN}[SUCCEED]${NC} Timezone successfully set to: $new_timezone"
-                hwclock --systohc
-            else
-                echo -e "${RED}[ERROR]${NC} Failed to set timezone"
-                return 1
-            fi
-        fi
-    } || handle_error "Set Timezone" "$?"
-}
-
-# Initialize error log and error tracking
-ERROR_LOG="$(dirname "$0")/error.log"
-> "$ERROR_LOG"  # Clear error log at start
-declare -a FAILED_STEPS=()
-
-# Error handling function
-handle_error() {
-    local step=$1
-    local error_msg=$2
-    local max_retries=3
-    local retry_count=0
-    
-    while [ $retry_count -lt $max_retries ]; do
-        echo -e "${RED}[ERROR]${NC} Step failed: $step (Attempt $((retry_count + 1))/$max_retries)"
-        echo "[$step] Error occurred at $(date '+%Y-%m-%d %H:%M:%S')" >> "$ERROR_LOG"
-        echo "Error message: $error_msg" >> "$ERROR_LOG"
-        echo "Command: $BASH_COMMAND" >> "$ERROR_LOG"
-        echo "----------------------------------------" >> "$ERROR_LOG"
-        
-        # 对于网络相关错误，等待后重试
-        if echo "$error_msg" | grep -q "Connection timed out\|Network is unreachable"; then
-            sleep 5
-            ((retry_count++))
-            continue
-        fi
-        
-        break
-    done
-    
-    if [ $retry_count -eq $max_retries ]; then
-        FAILED_STEPS+=("$step")
-        return 1
-    fi
-}
-
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then 
     echo "Please run this script with root privileges"
@@ -108,62 +24,69 @@ else
     exit 1
 fi
 
-# Select APT mirror function
-select_apt_mirror() {
-    if [[ "$OS" == *"Debian"* || "$OS" == *"Ubuntu"* ]]; then
-        # Display current mirror
-        echo -e "${BLUE}[INFO]${NC} Current APT mirror configuration:"
-        current_mirror=$(grep -v '^#' /etc/apt/sources.list | grep '^deb' | head -n1 | awk '{print $2}' | sed 's|https://||;s|http://||;s|/.*||')
-        echo -e "Current mirror: ${GREEN}$current_mirror${NC}"
+
+# Set system timezone
+set_timezone() {
+    {
+        echo "[INFO] Checking system timezone..."
+        current_tz=$(timedatectl show --property=Timezone --value)
+        echo "Current system timezone: $current_tz"
         
-        echo "Please select your preferred mirror:"
-        if [[ "$OS" == *"Debian"* ]]; then
-            echo "1) USTC Mirror (University of Science and Technology of China)"
-            echo "2) TUNA Mirror (Tsinghua University)"
-            echo "3) Aliyun Mirror (Alibaba Cloud)"
-        else  # Ubuntu
-            echo "1) USTC Mirror (University of Science and Technology of China)"
-            echo "2) TUNA Mirror (Tsinghua University)"
-            echo "3) Aliyun Mirror (Alibaba Cloud)"
+        # Detect timezone by IP
+        echo "[INFO] Detecting timezone based on IP..."
+        detected_tz=$(curl -s --max-time 5 http://ip-api.com/line/?fields=timezone || true)
+        
+        # 显示时区选项
+        echo "Choose an option:"
+        echo "1. Keep current system timezone [$current_tz]"
+        if [ -n "$detected_tz" ] && timedatectl list-timezones | grep -q "^$detected_tz$"; then
+            echo "2. Use detected timezone [$detected_tz]"
         fi
-        echo "n) Keep current mirror"
-        read -r -p "Enter your choice (1|2|3|n) [default: n]: " mirror_choice
-        mirror_choice=${mirror_choice:-n}
+        echo "3. Manually select timezone"
+        read -p "Enter choice (1-3): " tz_choice
         
-        case $mirror_choice in
-            1)
-                if [[ "$OS" == *"Debian"* ]]; then
-                    MIRROR_URL="mirrors.ustc.edu.cn/debian"
+        case $tz_choice in
+            2)  
+                if [ -n "$detected_tz" ]; then
+                    new_timezone=$detected_tz
                 else
-                    MIRROR_URL="mirrors.ustc.edu.cn/ubuntu"
+                    echo "[ERROR] No detected timezone available"
+                    return 1
                 fi
-                MIRROR_NAME="USTC Mirror"
                 ;;
-            2)
-                if [[ "$OS" == *"Debian"* ]]; then
-                    MIRROR_URL="mirrors.tuna.tsinghua.edu.cn/debian"
-                else
-                    MIRROR_URL="mirrors.tuna.tsinghua.edu.cn/ubuntu"
-                fi
-                MIRROR_NAME="TUNA Mirror"
+            3)  
+                echo "Available timezones:"
+                timedatectl list-timezones
+                while true; do
+                    read -p "Enter your timezone (e.g., Asia/Shanghai): " new_timezone
+                    if timedatectl list-timezones | grep -q "^$new_timezone$"; then
+                        break
+                    else
+                        echo "[ERROR] Invalid timezone. Please try again."
+                    fi
+                done
                 ;;
-            3)
-                if [[ "$OS" == *"Debian"* ]]; then
-                    MIRROR_URL="mirrors.aliyun.com/debian"
-                else
-                    MIRROR_URL="mirrors.aliyun.com/ubuntu"
-                fi
-                MIRROR_NAME="Aliyun Mirror"
-                ;;
-            *)
-                MIRROR_URL=""
-                MIRROR_NAME="Default Mirror"
-                echo "Keeping current sources"
+            *)  
+                echo "[INFO] Keeping current timezone: $current_tz"
+                return 0
                 ;;
         esac
-        [ -n "$MIRROR_URL" ] && echo "Selected: $MIRROR_NAME"
-    fi
+
+        # Set new timezone if selected
+        if [ -n "$new_timezone" ]; then
+            if timedatectl set-timezone "$new_timezone"; then
+                echo "[SUCCEED] Timezone successfully set to: $new_timezone"
+                if ! hwclock --systohc; then
+                    echo "[WARN] Failed to sync hardware clock"
+                fi
+            else
+                echo "[ERROR] Failed to set timezone"
+                return 1
+            fi
+        fi
+    } || handle_error "Set Timezone" "$?"
 }
+
 
 # Configuration choices
 get_user_choices() {
@@ -226,6 +149,213 @@ get_user_choices() {
     echo "----------------------------------------"
 }
 
+
+# Error handling function
+handle_error() {
+    local step=$1
+    local error_code=$2
+    local error_msg=$3
+    local max_retries=3
+    local retry_count=0
+    local wait_time=5
+    
+    # 记录错误
+    log_error "$step" "$error_code" "$error_msg"
+    
+    # 根据错误类型决定是否重试
+    case $error_code in
+        1)  # 一般错误
+            echo "[ERROR] General error in $step"
+            return 1
+            ;;
+        100|101|102)  # 网络错误
+            while [ $retry_count -lt $max_retries ]; do
+                echo "[RETRY] Attempting retry $((retry_count + 1))/$max_retries for $step"
+                sleep $wait_time
+                ((wait_time *= 2))
+                ((retry_count++))
+                
+                if "$@"; then
+                    echo "[SUCCEED] Retry successful"
+                    return 0
+                fi
+            done
+            ;;
+        126|127)  # 命令不存在
+            echo "[ERROR] Required command not found"
+            if ! install_dependencies; then
+                return 1
+            fi
+            ;;
+        *)  # 其他错误
+            echo "[ERROR] Unhandled error in $step"
+            return 1
+            ;;
+    esac
+    
+    FAILED_STEPS+=("$step")
+    return 1
+}
+
+log_error() {
+    local step=$1
+    local error_code=$2
+    local error_msg=$3
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    echo "[$timestamp] ERROR in $step (Code: $error_code)" >> "$ERROR_LOG"
+    echo "Message: $error_msg" >> "$ERROR_LOG"
+    echo "Command: $BASH_COMMAND" >> "$ERROR_LOG"
+    echo "----------------------------------------" >> "$ERROR_LOG"
+}
+
+# Select APT mirror function
+select_apt_mirror() {
+    if [[ "$OS" == *"Debian"* || "$OS" == *"Ubuntu"* ]]; then
+        # Display current mirror
+        echo "[INFO] Current APT mirror configuration:"
+        current_mirror=$(grep -v '^#' /etc/apt/sources.list | grep '^deb' | head -n1 | awk '{print $2}' | sed 's|https://||;s|http://||;s|/.*||')
+        echo "Current mirror: $current_mirror"
+        
+        echo "Please select your preferred mirror:"
+        if [[ "$OS" == *"Debian"* ]]; then
+            echo "1) USTC Mirror (University of Science and Technology of China)"
+            echo "2) TUNA Mirror (Tsinghua University)"
+            echo "3) Aliyun Mirror (Alibaba Cloud)"
+        else  # Ubuntu
+            echo "1) USTC Mirror (University of Science and Technology of China)"
+            echo "2) TUNA Mirror (Tsinghua University)"
+            echo "3) Aliyun Mirror (Alibaba Cloud)"
+        fi
+        echo "n) Keep current mirror"
+        read -r -p "Enter your choice (1|2|3|n) [default: n]: " mirror_choice
+        mirror_choice=${mirror_choice:-n}
+        
+        case $mirror_choice in
+            1)
+                if [[ "$OS" == *"Debian"* ]]; then
+                    MIRROR_URL="mirrors.ustc.edu.cn/debian"
+                else
+                    MIRROR_URL="mirrors.ustc.edu.cn/ubuntu"
+                fi
+                MIRROR_NAME="USTC Mirror"
+                ;;
+            2)
+                if [[ "$OS" == *"Debian"* ]]; then
+                    MIRROR_URL="mirrors.tuna.tsinghua.edu.cn/debian"
+                else
+                    MIRROR_URL="mirrors.tuna.tsinghua.edu.cn/ubuntu"
+                fi
+                MIRROR_NAME="TUNA Mirror"
+                ;;
+            3)
+                if [[ "$OS" == *"Debian"* ]]; then
+                    MIRROR_URL="mirrors.aliyun.com/debian"
+                else
+                    MIRROR_URL="mirrors.aliyun.com/ubuntu"
+                fi
+                MIRROR_NAME="Aliyun Mirror"
+                ;;
+            *)
+                MIRROR_URL=""
+                MIRROR_NAME="Default Mirror"
+                echo "Keeping current sources"
+                ;;
+        esac
+        [ -n "$MIRROR_URL" ] && echo "Selected: $MIRROR_NAME"
+    fi
+}
+
+# Configure APT sources
+configure_apt_sources() {
+    {
+        echo "[INFO] Configuring APT sources..."
+        
+        if [[ "$OS" == *"Debian"* || "$OS" == *"Ubuntu"* ]] && [ -n "$MIRROR_URL" ]; then
+            # 创建备份目录
+            local backup_dir="/etc/apt/backups"
+            mkdir -p "$backup_dir"
+            
+            # Backup original sources with timestamp
+            if [ -f /etc/apt/sources.list ]; then
+                local backup_file="$backup_dir/sources.list.backup.$(date +%Y%m%d%H%M%S)"
+                if ! cp /etc/apt/sources.list "$backup_file"; then
+                    echo "[ERROR] Failed to backup sources.list"
+                    return 1
+                fi
+                echo "[SUCCEED] Backed up original sources.list to $backup_file"
+                
+                # 清理旧备份
+                cleanup_backups
+            fi
+            
+            if [[ "$OS" == *"Debian"* ]]; then
+                VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
+                VERSION_NUM=$(. /etc/os-release && echo "$VERSION_ID")
+                
+                echo "[INFO] Configuring Debian sources with $MIRROR_NAME ($MIRROR_URL)"
+                
+                # 根据Debian版本配置不同的源
+                if [ "$VERSION_NUM" -ge 12 ]; then
+                    # Debian 12 (Bookworm) 及以上版本包含 non-free-firmware
+                    cat > /etc/apt/sources.list << EOF
+# Debian $VERSION_CODE repository ($MIRROR_NAME)
+deb http://$MIRROR_URL $VERSION_CODE main contrib non-free non-free-firmware
+deb http://$MIRROR_URL $VERSION_CODE-updates main contrib non-free non-free-firmware
+deb http://$MIRROR_URL $VERSION_CODE-backports main contrib non-free non-free-firmware
+deb http://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free non-free-firmware
+EOF
+                else
+                    # Debian 11 (Bullseye) 及以下版本
+                    cat > /etc/apt/sources.list << EOF
+# Debian $VERSION_CODE repository ($MIRROR_NAME)
+deb http://$MIRROR_URL $VERSION_CODE main contrib non-free
+deb http://$MIRROR_URL $VERSION_CODE-updates main contrib non-free
+deb http://$MIRROR_URL $VERSION_CODE-backports main contrib non-free
+deb http://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free
+EOF
+                fi
+            else  # Ubuntu
+                VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
+                
+                echo "[INFO] Configuring Ubuntu sources with $MIRROR_NAME ($MIRROR_URL)"
+                
+                cat > /etc/apt/sources.list << EOF
+# Ubuntu $VERSION_CODE repository ($MIRROR_NAME)
+deb http://$MIRROR_URL $VERSION_CODE main restricted universe multiverse
+deb http://$MIRROR_URL $VERSION_CODE-updates main restricted universe multiverse
+deb http://$MIRROR_URL $VERSION_CODE-backports main restricted universe multiverse
+deb http://$MIRROR_URL $VERSION_CODE-security main restricted universe multiverse
+EOF
+            fi
+            
+            # 验证文件是否成功创建和写入
+            if [ -f /etc/apt/sources.list ] && [ -s /etc/apt/sources.list ]; then
+                echo "[SUCCEED] APT sources configured for $OS"
+                echo "[SUCCEED] Using $MIRROR_NAME"
+                
+                # 测试新源可用性
+                if apt-get update -qq &>/dev/null; then
+                    echo "[SUCCEED] APT sources update completed"
+                else
+                    echo "[ERROR] Failed to update APT sources"
+                    # 恢复备份
+                    cp "$backup_file" /etc/apt/sources.list
+                    echo "[INFO] Restored original sources.list from backup"
+                    return 1
+                fi
+            else
+                echo "[ERROR] Failed to write sources.list"
+                return 1
+            fi
+            
+        else
+            echo "[WARN] Skipping APT source configuration: either unsupported system or no mirror selected"
+        fi
+        
+    } || handle_error "Configure APT Sources" "$?"
+}
+
 # 1. Remove snap (Ubuntu only)
 remove_snap() {
     {
@@ -284,33 +414,89 @@ setup_ssh() {
 # 5. Create new user
 create_user() {
     {
-        echo -e "${BLUE}[INFO]${NC} Creating user $new_username..."
-        if ! useradd -m "$new_username"; then
-            echo -e "${RED}[ERROR]${NC} Failed to create user"
+        # 验证用户名
+        local username_regex="^[a-z_][a-z0-9_-]*[$]?$"
+        while true; do
+            if [ -z "$new_username" ]; then
+                read -p "Enter new username: " new_username
+            fi
+            
+            if [[ ! $new_username =~ $username_regex ]]; then
+                echo "[ERROR] Invalid username format. Use only lowercase letters, numbers, - and _"
+                new_username=""
+                continue
+            fi
+            
+            if id "$new_username" &>/dev/null; then
+                echo "[ERROR] User $new_username already exists"
+                new_username=""
+                continue
+            fi
+            break
+        done
+
+        echo "[INFO] Creating user $new_username..."
+        if ! useradd -m -s /bin/bash "$new_username"; then
+            echo "[ERROR] Failed to create user"
             return 1
         fi
         
-        echo -e "${GREEN}[SUCCEED]${NC} User created. Please set password:"
-        passwd "$new_username"
-        
-        # Add to sudo group
-        usermod -aG sudo "$new_username"
-        
-        # Set shell
-        usermod -s /bin/bash "$new_username"
-        
-        if [ "$add_ssh_key_choice" = "y" ]; then
-            # Create .ssh directory
-            mkdir -p "/home/$new_username/.ssh"
-            chmod 700 "/home/$new_username/.ssh"
-            touch "/home/$new_username/.ssh/authorized_keys"
-            chmod 600 "/home/$new_username/.ssh/authorized_keys"
-            chown -R "$new_username:$new_username" "/home/$new_username/.ssh"
-
-            echo "Enter SSH public key (paste and press Enter, then Ctrl+D when done):"
-            cat > "/home/$new_username/.ssh/authorized_keys"
+        # 设置密码策略
+        echo "[INFO] Setting password policy..."
+        if ! apt-get install -y libpam-pwquality; then
+            echo "[WARN] Failed to install password quality checker"
         fi
+        
+        # 设置密码
+        while true; do
+            if passwd "$new_username"; then
+                break
+            else
+                echo "[ERROR] Password setting failed. Please try again."
+            fi
+        done
+        
+        # 添加到sudo组
+        if ! usermod -aG sudo "$new_username"; then
+            echo "[WARN] Failed to add user to sudo group"
+        fi
+        
+        # 配置SSH
+        if [ "$add_ssh_key_choice" = "y" ]; then
+            setup_ssh_for_user "$new_username"
+        fi
+        
+        echo "[SUCCEED] User $new_username created successfully"
     } || handle_error "Create User" "$?"
+}
+
+setup_ssh_for_user() {
+    local username=$1
+    local ssh_dir="/home/$username/.ssh"
+    
+    # 创建并设置.ssh目录权限
+    if ! mkdir -p "$ssh_dir"; then
+        echo "[ERROR] Failed to create SSH directory"
+        return 1
+    fi
+    
+    # 设置正确的权限
+    chmod 700 "$ssh_dir"
+    touch "$ssh_dir/authorized_keys"
+    chmod 600 "$ssh_dir/authorized_keys"
+    chown -R "$username:$username" "$ssh_dir"
+
+    echo "Enter SSH public key (paste and press Enter, then Ctrl+D when done):"
+    if ! cat > "$ssh_dir/authorized_keys"; then
+        echo "[ERROR] Failed to write SSH key"
+        return 1
+    fi
+    
+    # 验证SSH密钥格式
+    if ! ssh-keygen -l -f "$ssh_dir/authorized_keys" &>/dev/null; then
+        echo "[ERROR] Invalid SSH key format"
+        return 1
+    fi
 }
 
 # 6. Configure SSH
@@ -318,7 +504,7 @@ configure_ssh() {
     {
         # 使用之前在 get_user_choices 中获取的 ssh_port
         if [ -z "$ssh_port" ]; then
-            echo -e "${RED}[ERROR]${NC} SSH port not set"
+            echo "[ERROR] SSH port not set"
             return 1
         fi
         
@@ -356,9 +542,9 @@ AllowUsers $new_username
 EOF
 
         if systemctl restart sshd; then
-            echo -e "${GREEN}[SUCCEED]${NC} SSH service restarted successfully"
+            echo "[SUCCEED] SSH service restarted successfully"
         else
-            echo -e "${RED}[ERROR]${NC} Failed to restart SSH service"
+            echo "[ERROR] Failed to restart SSH service"
             return 1
         fi
     } || handle_error "Configure SSH" "$?"
@@ -367,102 +553,77 @@ EOF
 # 7. Install Docker
 install_docker() {
     {
-        echo -e "${BLUE}[INFO]${NC} Starting Docker installation..."
-        # 更彻底的旧版本清理
-        echo "Removing all Docker components..."
-        apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
-        apt-get purge -y docker-ce docker-ce-cli containerd.io 2>/dev/null || true
-        rm -rf /var/lib/docker /var/lib/containerd
-
-        # 统一使用中科大docker镜像源配置
-        echo "Starting Docker installation using USTC mirror..."
-        apt-get update
-        apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common
-
-        # 通用镜像源配置
-        if [[ "$OS" == *"Ubuntu"* ]]; then
-            MIRROR_PATH="ubuntu"
-            VERSION_CODE=$(lsb_release -cs)
-        elif [[ "$OS" == *"Debian"* ]]; then
-            MIRROR_PATH="debian"
-            VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
-        fi
-
-        # 统一从中科大获取 GPG 密钥
-        curl -fsSL https://mirrors.ustc.edu.cn/docker-ce/linux/$MIRROR_PATH/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://mirrors.ustc.edu.cn/docker-ce/linux/$MIRROR_PATH $VERSION_CODE stable" > /etc/apt/sources.list.d/docker.list
-
-        apt-get update
-        # Debian 需要额外安装组件
-        local pkg_list="docker-ce docker-ce-cli containerd.io"
-        [[ "$OS" == *"Debian"* ]] && pkg_list+=" docker-buildx-plugin docker-compose-plugin"
+        echo "[INFO] Starting Docker installation..."
         
-        apt-get install -y $pkg_list
-
+        # 检查系统要求
+        if ! check_docker_prerequisites; then
+            return 1
+        }
+        
+        # 清理旧版本
+        remove_old_docker
+        
+        # 安装新版本
+        if ! install_new_docker; then
+            return 1
+        }
+        
+        # 配置Docker
+        if ! configure_docker; then
+            return 1
+        }
+        
+        # 配置用户权限
+        configure_docker_permissions
+        
         # 验证安装
-        if docker --version; then
-            echo -e "${GREEN}[SUCCEED]${NC} Docker $(docker --version | awk '{print $3}') installed"
-        else
-            echo -e "${RED}[ERROR]${NC} Docker installation failed"
-            return 1
-        fi
-
-        # 处理旧配置文件
-        echo "Configuring Docker registry mirrors..."
-        mkdir -p /etc/docker
-        [ -f /etc/docker/daemon.json ] && rm -f /etc/docker/daemon.json
-
-        # 生成daemon.json配置
-        echo "Creating docker daemon.json..."
-        cat > /etc/docker/daemon.json <<EOF
-{
-    "registry-mirrors": [
-        "https://docker-0.unsee.tech",
-        "https://docker.1panel.live"
-    ]
-}
-EOF
-        sudo systemctl daemon-reload && sudo systemctl restart docker
-
-        # 配置用户权限（即使使用脚本安装也需要）
-        if [ "$create_user_choice" = "y" ]; then
-            if ! getent group docker >/dev/null; then
-                if ! groupadd docker; then
-                    handle_error "Docker Group Creation" "$?"
-                    return 1
-                fi
-            fi
-            if ! usermod -aG docker "$new_username"; then
-                handle_error "Docker User Permission" "$?"
-                return 1
-            fi
-            # 验证用户是否成功添加到组
-            if ! groups "$new_username" | grep -q docker; then
-                handle_error "Docker Group Verification" "Failed to add user to docker group"
-                return 1
-            fi
-        fi
-
-        # 基础功能验证
-        if ! docker run --rm hello-world; then
-            handle_error "Docker Test" "Hello-world container failed"
-            return 1
-        fi
-
-        # 配置服务自启动
-        echo "Configuring Docker service..."
-        systemctl enable docker
-        systemctl start docker
-
-        # 重启docker使配置生效
-        systemctl daemon-reload
-        systemctl restart docker
-
-        # 最终系统更新
-        echo "Performing final system update..."
-        eval "$PKG_UPDATE"
-
+        verify_docker_installation
+        
     } || handle_error "Install Docker" "$?"
+}
+
+check_docker_prerequisites() {
+    # 检查系统内存
+    local total_mem=$(free -m | awk '/^Mem:/{print $2}')
+    if [ "$total_mem" -lt 2048 ]; then
+        echo "[WARN] Less than 2GB RAM available. Docker might not perform optimally."
+    fi
+    
+    # 检查磁盘空间
+    local free_space=$(df -m /var | awk 'NR==2 {print $4}')
+    if [ "$free_space" -lt 20480 ]; then
+        echo "[ERROR] Insufficient disk space. At least 20GB free space required."
+        return 1
+    fi
+    
+    return 0
+}
+
+configure_docker_permissions() {
+    # 为所有需要访问Docker的用户配置权限
+    if ! getent group docker >/dev/null; then
+        groupadd docker
+    fi
+    
+    # 如果创建了新用户，将其添加到docker组
+    if [ -n "$new_username" ]; then
+        usermod -aG docker "$new_username"
+    fi
+    
+    # 询问是否为其他用户配置Docker权限
+    read -p "Do you want to configure Docker permissions for other users? (y/n): " configure_others
+    if [ "$configure_others" = "y" ]; then
+        while true; do
+            read -p "Enter username (or 'done' to finish): " username
+            [ "$username" = "done" ] && break
+            if id "$username" &>/dev/null; then
+                usermod -aG docker "$username"
+                echo "[SUCCEED] Added $username to docker group"
+            else
+                echo "[ERROR] User $username does not exist"
+            fi
+        done
+    fi
 }
 
 # 8. Install Git
@@ -490,123 +651,169 @@ install_git() {
                 apt install -y git
                 echo "Git installed successfully. Version: $(git --version)"
             fi
+            
+            # 配置Git全局设置
+            if [ -n "$new_username" ]; then
+                echo "Do you want to configure Git for $new_username? (y/n)"
+                read -r configure_git
+                if [ "$configure_git" = "y" ]; then
+                    su - "$new_username" -c 'read -p "Enter Git user name: " git_name && git config --global user.name "$git_name"'
+                    su - "$new_username" -c 'read -p "Enter Git email: " git_email && git config --global user.email "$git_email"'
+                    echo "[SUCCEED] Git configured for $new_username"
+                fi
+            fi
         fi
     } || handle_error "Install Git" "$?"
 }
 
-# Configure APT sources
-configure_apt_sources() {
-    {
-        echo -e "${BLUE}[INFO]${NC} Configuring APT sources..."
-        
-        if [[ "$OS" == *"Debian"* || "$OS" == *"Ubuntu"* ]] && [ -n "$MIRROR_URL" ]; then
-            # Backup original sources
-            if [ -f /etc/apt/sources.list ]; then
-                cp /etc/apt/sources.list "/etc/apt/sources.list.backup.$(date +%Y%m%d%H%M%S)"
-                echo -e "${GREEN}[SUCCEED]${NC} Backed up original sources.list"
-            fi
-            
-            if [[ "$OS" == *"Debian"* ]]; then
-                VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
-                VERSION_NUM=$(. /etc/os-release && echo "$VERSION_ID")
-                
-                echo -e "${BLUE}[INFO]${NC} Configuring Debian sources with $MIRROR_NAME ($MIRROR_URL)"
-                
-                # 根据Debian版本配置不同的源
-                if [ "$VERSION_NUM" -ge 12 ]; then
-                    # Debian 12 (Bookworm) 及以上版本包含 non-free-firmware
-                    cat > /etc/apt/sources.list << EOF
-# Debian $VERSION_CODE repository ($MIRROR_NAME)
-deb http://$MIRROR_URL $VERSION_CODE main contrib non-free non-free-firmware
-deb http://$MIRROR_URL $VERSION_CODE-updates main contrib non-free non-free-firmware
-deb http://$MIRROR_URL $VERSION_CODE-backports main contrib non-free non-free-firmware
-deb http://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free non-free-firmware
+# 在脚本开始处添加
+load_config() {
+    local config_file="/etc/system-init.conf"
+    if [ -f "$config_file" ]; then
+        # shellcheck source=/dev/null
+        source "$config_file"
+    else
+        # 创建默认配置
+        cat > "$config_file" << EOF
+# System initialization configuration
+MAX_RETRIES=3
+DEFAULT_TIMEZONE="UTC"
+SSH_PORT_MIN=1024
+SSH_PORT_MAX=65535
+BACKUP_RETENTION_DAYS=30
+LOG_LEVEL="INFO"  # DEBUG, INFO, WARN, ERROR
 EOF
-                else
-                    # Debian 11 (Bullseye) 及以下版本
-                    cat > /etc/apt/sources.list << EOF
-# Debian $VERSION_CODE repository ($MIRROR_NAME)
-deb http://$MIRROR_URL $VERSION_CODE main contrib non-free
-deb http://$MIRROR_URL $VERSION_CODE-updates main contrib non-free
-deb http://$MIRROR_URL $VERSION_CODE-backports main contrib non-free
-deb http://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free
-EOF
-                fi
-            else  # Ubuntu
-                VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
-                
-                echo -e "${BLUE}[INFO]${NC} Configuring Ubuntu sources with $MIRROR_NAME ($MIRROR_URL)"
-                
-                cat > /etc/apt/sources.list << EOF
-# Ubuntu $VERSION_CODE repository ($MIRROR_NAME)
-deb http://$MIRROR_URL $VERSION_CODE main restricted universe multiverse
-deb http://$MIRROR_URL $VERSION_CODE-updates main restricted universe multiverse
-deb http://$MIRROR_URL $VERSION_CODE-backports main restricted universe multiverse
-deb http://$MIRROR_URL $VERSION_CODE-security main restricted universe multiverse
-EOF
-            fi
-            
-            # 验证文件是否成功创建和写入
-            if [ -f /etc/apt/sources.list ] && [ -s /etc/apt/sources.list ]; then
-                echo -e "${GREEN}[SUCCEED]${NC} APT sources configured for $OS"
-                echo -e "${GREEN}[SUCCEED]${NC} Using $MIRROR_NAME"
-                
-                # Update package lists
-                if apt-get update; then
-                    echo -e "${GREEN}[SUCCEED]${NC} APT sources update completed"
-                else
-                    echo -e "${RED}[ERROR]${NC} Failed to update APT sources"
-                    return 1
-                fi
-            else
-                echo -e "${RED}[ERROR]${NC} Failed to write sources.list"
-                return 1
-            fi
-            
-        else
-            echo -e "${YELLOW}[WARN]${NC} Skipping APT source configuration: either unsupported system or no mirror selected"
+    fi
+}
+
+# 清理旧备份
+cleanup_backups() {
+    local backup_dir="/etc/apt/backups"
+    find "$backup_dir" -name "sources.list.backup.*" -mtime +${BACKUP_RETENTION_DAYS} -delete
+}
+
+# 检查系统资源
+check_system_resources() {
+    local min_memory=512  # MB
+    local min_disk=5120   # MB
+    
+    # 检查内存
+    local total_mem=$(free -m | awk '/^Mem:/{print $2}')
+    if [ "$total_mem" -lt "$min_memory" ]; then
+        echo "[ERROR] Insufficient memory: ${total_mem}MB (minimum: ${min_memory}MB)"
+        return 1
+    fi
+    
+    # 检查磁盘空间
+    local free_space=$(df -m / | awk 'NR==2 {print $4}')
+    if [ "$free_space" -lt "$min_disk" ]; then
+        echo "[ERROR] Insufficient disk space: ${free_space}MB (minimum: ${min_disk}MB)"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 验证网络连接
+check_network() {
+    local test_hosts=("8.8.8.8" "1.1.1.1")
+    local success=false
+    
+    for host in "${test_hosts[@]}"; do
+        if ping -c 1 -W 2 "$host" &>/dev/null; then
+            success=true
+            break
         fi
-        
-    } || handle_error "Configure APT Sources" "$?"
+    done
+    
+    if ! $success; then
+        echo "[ERROR] No network connectivity"
+        return 1
+    fi
+    
+    return 0
+}
+
+# 备份管理
+manage_backups() {
+    local backup_dir=$1
+    local retention_days=${BACKUP_RETENTION_DAYS:-30}
+    
+    # 创建备份目录
+    mkdir -p "$backup_dir"
+    
+    # 清理旧备份
+    find "$backup_dir" -type f -mtime +"$retention_days" -delete
+    
+    # 压缩旧备份
+    find "$backup_dir" -type f -mtime +7 -not -name "*.gz" -exec gzip {} \;
 }
 
 # Main program
 main() {
-    echo -e "${BLUE}[INIT]${NC} Starting system initialization..."
-    set_timezone
-    get_user_choices
-    remove_snap        
-    system_update        
-    install_git        
-    disable_hibernation        
-    setup_ssh
-    
-    if [ "$create_user_choice" = "y" ]; then
-        create_user
-        configure_ssh
-    fi
-    
-    if [ "$install_docker_choice" = "y" ]; then
-        install_docker
-    fi
+    echo "[INIT] Starting system initialization..."
 
-    echo "System initialization completed!"
+    # 初始化变量和日志
+    ERROR_LOG="$(dirname "$0")/error.log"
+    > "$ERROR_LOG"  # 清空错误日志
+    declare -a FAILED_STEPS=()
+    
+    # 加载配置
+    load_config
+    
+    # 创建临时目录
+    TEMP_DIR=$(mktemp -d)
+    trap 'rm -rf "$TEMP_DIR"' EXIT
+    
+    # 执行初始化步骤
+    local steps=(
+        "set_timezone"
+        "get_user_choices"
+        "configure_apt_sources"
+        "remove_snap"
+        "system_update"
+        "install_git"
+        "disable_hibernation"
+        "setup_ssh"
+    )
+    
+    # 条件步骤
+    [ "$create_user_choice" = "y" ] && steps+=("create_user" "configure_ssh")
+    [ "$install_docker_choice" = "y" ] && steps+=("install_docker")
+    
+    # 执行步骤
+    for step in "${steps[@]}"; do
+        echo "[INFO] Executing step: $step"
+        if ! $step; then
+            FAILED_STEPS+=("$step")
+            echo "[ERROR] Step $step failed"
+            # 根据错误处理策略决定是否继续
+            if [ "${STOP_ON_ERROR:-false}" = "true" ]; then
+                break
+            fi
+        fi
+    done
+
+    # 总结报告
+    echo -e "\nSystem initialization completed!"
     if [ "$create_user_choice" = "y" ]; then
         echo "Please use SSH port $ssh_port and username $new_username to login"
         echo "Remember to save the SSH config backup file: /etc/ssh/sshd_config.backup"
     fi
 
-    # Check if any steps failed and report
+    # 检查失败步骤
     if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
         echo -e "\nWarning: The following steps encountered errors:"
         printf '%s\n' "${FAILED_STEPS[@]}"
         echo "Please check $ERROR_LOG for detailed error messages"
+        exit 1
     else
-        # Clean up error log if empty
+        # 清理空的错误日志
         if [ ! -s "$ERROR_LOG" ]; then
             rm -f "$ERROR_LOG"
-            echo -e "\nNo errors occurred during initialization - error log removed"
+            echo -e "\nNo errors occurred during initialization"
         fi
+        exit 0
     fi
 }
 
