@@ -122,3 +122,7 @@ The script will prompt for:
 ## Troubleshooting
 
 1. Check `error.log`
+
+## Log
+
+2025-02-23 Test on Ubuntu 20.04 LTS
