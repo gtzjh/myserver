@@ -308,9 +308,40 @@ install_docker() {
             return 1
         fi
 
+        # 配置服务自启动
+        echo "Configuring Docker service..."
+        systemctl enable docker  # 设置开机自启
+        systemctl start docker   # 立即启动服务
+
         # 最终系统更新
         echo "Performing final system update..."
         $PKG_UPDATE
+
+        # 创建docker配置目录
+        mkdir -p /etc/docker
+
+        # 配置镜像加速器（包含多个备用源）
+        cat > /etc/docker/daemon.json << EOF
+{
+    "registry-mirrors": [
+        "https://mirror.ccs.tencentyun.com",
+        "https://hub-mirror.c.163.com",
+        "https://mirror.baidubce.com",
+        "https://docker.mirrors.ustc.edu.cn",
+        "https://docker.nju.edu.cn"
+    ],
+    "live-restore": true,
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": "100m",
+        "max-file": "3"
+    }
+}
+EOF
+
+        # 重启docker使配置生效
+        systemctl daemon-reload
+        systemctl restart docker
 
     } || handle_error "Install Docker" "$?"
 }
