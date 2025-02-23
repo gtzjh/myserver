@@ -762,6 +762,10 @@ install_new_docker() {
             "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
             $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
             tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+        # Ensure you are now installing Docker from the official Docker repository instead of the default Debian repository:
+        apt-cache policy docker-ce
+
     else
         echo "[ERROR] Unsupported operating system: $OS"
         return 1
