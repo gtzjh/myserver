@@ -574,12 +574,6 @@ install_docker() {
                 fi
             fi
             
-            # Check system requirements
-            if ! check_docker_prerequisites; then
-                echo "[ERROR] System requirements not met for Docker installation"
-                return 1
-            fi
-            
             # Clean up old versions
             echo "[INFO] Removing old Docker installations..."
             if ! remove_old_docker; then
@@ -620,23 +614,6 @@ install_docker() {
             
         } || handle_error "Install Docker" "$?"
     fi
-}
-
-check_docker_prerequisites() {
-    # Check system memory
-    local total_mem=$(free -m | awk '/^Mem:/{print $2}')
-    if [ "$total_mem" -lt 2048 ]; then
-        echo "[WARN] Less than 2GB RAM available. Docker might not perform optimally."
-    fi
-    
-    # Check disk space
-    local free_space=$(df -m /var | awk 'NR==2 {print $4}')
-    if [ "$free_space" -lt 20480 ]; then
-        echo "[ERROR] Insufficient disk space. At least 20GB free space required."
-        return 1
-    fi
-    
-    return 0
 }
 
 configure_docker_permissions() {
