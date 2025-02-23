@@ -560,34 +560,66 @@ EOF
 
 # 7. Install Docker
 install_docker() {
-    {
-        echo "[INFO] Starting Docker installation..."
-        
-        # Check system requirements
-        if ! check_docker_prerequisites; then
-            return 1
-        fi
-        
-        # Clean up old versions
-        remove_old_docker
-        
-        # Install new version
-        if ! install_new_docker; then
-            return 1
-        fi
-        
-        # Configure Docker
-        if ! configure_docker; then
-            return 1
-        fi
-        
-        # Configure user permissions
-        configure_docker_permissions
-        
-        # Verify installation
-        verify_docker_installation
-        
-    } || handle_error "Install Docker" "$?"
+    if [ "$install_docker_choice" = "y" ]; then
+        {
+            echo "[INFO] Starting Docker installation..."
+            
+            # Check if Docker is already installed
+            if command -v docker &>/dev/null; then
+                echo "[INFO] Docker is already installed. Version: $(docker --version)"
+                read -p "Do you want to reinstall Docker? (y/n): " reinstall
+                if [ "$reinstall" != "y" ]; then
+                    echo "[INFO] Skipping Docker installation"
+                    return 0
+                fi
+            fi
+            
+            # Check system requirements
+            if ! check_docker_prerequisites; then
+                echo "[ERROR] System requirements not met for Docker installation"
+                return 1
+            fi
+            
+            # Clean up old versions
+            echo "[INFO] Removing old Docker installations..."
+            if ! remove_old_docker; then
+                echo "[WARN] Failed to remove old Docker installations"
+                # Continue anyway as this might be a fresh install
+            fi
+            
+            # Install new version
+            echo "[INFO] Installing new Docker version..."
+            if ! install_new_docker; then
+                echo "[ERROR] Failed to install Docker"
+                return 1
+            fi
+            
+            # Configure Docker
+            echo "[INFO] Configuring Docker..."
+            if ! configure_docker; then
+                echo "[ERROR] Failed to configure Docker"
+                return 1
+            fi
+            
+            # Configure user permissions
+            echo "[INFO] Setting up Docker permissions..."
+            if ! configure_docker_permissions; then
+                echo "[WARN] Failed to configure Docker permissions"
+                # Don't return error as Docker is still usable
+            fi
+            
+            # Verify installation
+            echo "[INFO] Verifying Docker installation..."
+            if ! verify_docker_installation; then
+                echo "[ERROR] Docker installation verification failed"
+                return 1
+            fi
+            
+            echo "[SUCCEED] Docker installation completed successfully"
+            return 0
+            
+        } || handle_error "Install Docker" "$?"
+    fi
 }
 
 check_docker_prerequisites() {
@@ -873,14 +905,14 @@ main() {
         "configure_apt_sources"
         "remove_snap"
         "system_update"
-        "install_git"
         "disable_hibernation"
         "setup_ssh"
+        "install_docker"
+        "install_git"
     )
     
     # Conditional steps
     [ "$create_user_choice" = "y" ] && steps+=("create_user" "configure_ssh")
-    [ "$install_docker_choice" = "y" ] && steps+=("install_docker")
     
     # Execute steps
     for step in "${steps[@]}"; do
