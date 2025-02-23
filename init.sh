@@ -113,8 +113,35 @@ get_user_choices() {
     echo "System initialization configuration"
     echo "----------------------------------------"
     
-    # Choice 1/5: Remove snap
-    echo "Choice (1/6): Remove snap?"
+    # Choice 1/7: Select APT mirror
+    echo "Choice (1/7): APT Mirror Selection"
+    if [[ "$OS" == *"Debian"* ]]; then
+        echo "Please select your preferred mirror:"
+        echo "1) USTC Mirror (中国科技大学源)"
+        echo "2) TUNA Mirror (清华大学源)"
+        echo "3) Aliyun Mirror (阿里云源)"
+        read -r -p "Enter your choice (1-3) [default: 1]: " mirror_choice
+        mirror_choice=${mirror_choice:-1}
+        
+        case $mirror_choice in
+            2)
+                MIRROR_URL="mirrors.tuna.tsinghua.edu.cn"
+                MIRROR_NAME="TUNA Mirror"
+                ;;
+            3)
+                MIRROR_URL="mirrors.aliyun.com"
+                MIRROR_NAME="Aliyun Mirror"
+                ;;
+            *)
+                MIRROR_URL="mirrors.ustc.edu.cn"
+                MIRROR_NAME="USTC Mirror"
+                ;;
+        esac
+        echo "Selected: $MIRROR_NAME"
+    fi
+
+    # Choice 2/7: Remove snap
+    echo -e "\nChoice (2/7): Remove snap?"
     if [[ "$OS" == *"Ubuntu"* ]]; then
         echo "Do you want to remove snap? (y/n)"
         read -r remove_snap_choice
@@ -122,8 +149,8 @@ get_user_choices() {
         remove_snap_choice="n"
     fi
 
-    # Choice 2/5: Create new user
-    echo -e "\nChoice (2/6): User creation"
+    # Choice 3/7: Create new user
+    echo -e "\nChoice (3/7): User creation"
     echo "Do you want to create a new user? (y/n)"
     read -r create_user_choice
     
@@ -132,8 +159,8 @@ get_user_choices() {
         read -r new_username
     fi
 
-    # Choice 3/5: SSH key
-    echo -e "\nChoice (3/6): SSH configuration"
+    # Choice 4/7: SSH key
+    echo -e "\nChoice (4/7): SSH configuration"
     echo "Do you want to add SSH public key? (y/n)"
     read -r add_ssh_key_choice
     
@@ -142,8 +169,8 @@ get_user_choices() {
         add_ssh_key_choice="n"
     fi
 
-    # Choice 4/5: SSH port (modified to ask regardless of user creation)
-    echo -e "\nChoice (4/6): SSH port configuration"
+    # Choice 5/7: SSH port
+    echo -e "\nChoice (5/7): SSH port configuration"
     echo "Do you want to change the SSH port? [y/n]"
     read -r change_ssh_port
     if [ "$change_ssh_port" = "y" ]; then
@@ -151,13 +178,13 @@ get_user_choices() {
         read -r ssh_port
     fi
 
-    # Choice 5/5: Install Docker
-    echo -e "\nChoice (5/6): Docker Installation"
+    # Choice 6/7: Install Docker
+    echo -e "\nChoice (6/7): Docker Installation"
     echo "Do you want to install Docker? (y/n)"
     read -r install_docker_choice
     
-    # Choice 6/6: Install Git
-    echo -e "\nChoice (6/6): Git Installation"
+    # Choice 7/7: Install Git
+    echo -e "\nChoice (7/7): Git Installation"
     echo "Do you want to install Git? (y/n)"
     read -r install_git_choice
     
@@ -313,7 +340,7 @@ install_docker() {
         apt-get purge -y docker-ce docker-ce-cli containerd.io 2>/dev/null || true
         rm -rf /var/lib/docker /var/lib/containerd
 
-        # 统一使用中科大镜像源配置
+        # 统一使用中科大docker镜像源配置
         echo "Starting Docker installation using USTC mirror..."
         apt-get update
         apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common
@@ -431,6 +458,54 @@ install_git() {
             fi
         fi
     } || handle_error "Install Git" "$?"
+}
+
+# Configure APT sources
+configure_apt_sources() {
+    {
+        echo -e "${BLUE}[INFO]${NC} Configuring APT sources..."
+        
+        if [[ "$OS" == *"Debian"* ]]; then
+            # Backup original sources
+            cp /etc/apt/sources.list /etc/apt/sources.list.backup
+            
+            VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
+            VERSION_NUM=$(. /etc/os-release && echo "$VERSION_ID")
+            
+            echo -e "${BLUE}[INFO]${NC} Using $MIRROR_NAME ($MIRROR_URL)"
+            
+            # 根据Debian版本配置不同的源
+            if [ "$VERSION_NUM" -ge 12 ]; then
+                # Debian 12 (Bookworm) 及以上版本包含 non-free-firmware
+                cat > /etc/apt/sources.list << EOF
+# Debian $VERSION_CODE repository ($MIRROR_NAME)
+deb https://$MIRROR_URL/debian/ $VERSION_CODE main contrib non-free non-free-firmware
+deb https://$MIRROR_URL/debian/ $VERSION_CODE-updates main contrib non-free non-free-firmware
+deb https://$MIRROR_URL/debian/ $VERSION_CODE-backports main contrib non-free non-free-firmware
+deb https://$MIRROR_URL/debian-security/ $VERSION_CODE-security main contrib non-free non-free-firmware
+EOF
+            else
+                # Debian 11 (Bullseye) 及以下版本
+                cat > /etc/apt/sources.list << EOF
+# Debian $VERSION_CODE repository ($MIRROR_NAME)
+deb https://$MIRROR_URL/debian/ $VERSION_CODE main contrib non-free
+deb https://$MIRROR_URL/debian/ $VERSION_CODE-updates main contrib non-free
+deb https://$MIRROR_URL/debian/ $VERSION_CODE-backports main contrib non-free
+deb https://$MIRROR_URL/debian-security/ $VERSION_CODE-security main contrib non-free
+EOF
+            fi
+            
+            echo -e "${GREEN}[SUCCEED]${NC} APT sources configured for Debian $VERSION_NUM ($VERSION_CODE)"
+            echo -e "${GREEN}[SUCCEED]${NC} Using $MIRROR_NAME"
+            echo -e "${GREEN}[SUCCEED]${NC} Old sources backed up to /etc/apt/sources.list.backup"
+            
+            # Update package lists
+            apt update
+        else
+            echo -e "${YELLOW}[WARN]${NC} Not a Debian system, skipping APT source configuration"
+        fi
+        
+    } || handle_error "Configure APT Sources" "$?"
 }
 
 # Main program
