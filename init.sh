@@ -115,31 +115,49 @@ get_user_choices() {
     
     # Choice 1/7: Select APT mirror
     echo "Choice (1/7): APT Mirror Selection"
-    if [[ "$OS" == *"Debian"* ]]; then
+    if [[ "$OS" == *"Debian"* || "$OS" == *"Ubuntu"* ]]; then
         # Display current mirror
         echo -e "${BLUE}[INFO]${NC} Current APT mirror configuration:"
         current_mirror=$(grep -v '^#' /etc/apt/sources.list | grep '^deb' | head -n1 | awk '{print $2}' | sed 's|https://||;s|http://||;s|/.*||')
         echo -e "Current mirror: ${GREEN}$current_mirror${NC}"
         
         echo "Please select your preferred mirror:"
-        echo "1) USTC Mirror (中国科技大学源)"
-        echo "2) TUNA Mirror (清华大学源)"
-        echo "3) Aliyun Mirror (阿里云源)"
+        if [[ "$OS" == *"Debian"* ]]; then
+            echo "1) USTC Mirror (中国科技大学源)"
+            echo "2) TUNA Mirror (清华大学源)"
+            echo "3) Aliyun Mirror (阿里云源)"
+        else  # Ubuntu
+            echo "1) USTC Mirror (中国科技大学源)"
+            echo "2) TUNA Mirror (清华大学源)"
+            echo "3) Aliyun Mirror (阿里云源)"
+        fi
         echo "n) Keep current mirror"
         read -r -p "Enter your choice (1-3/n) [default: n]: " mirror_choice
         mirror_choice=${mirror_choice:-n}
         
         case $mirror_choice in
             1)
-                MIRROR_URL="mirrors.ustc.edu.cn"
+                if [[ "$OS" == *"Debian"* ]]; then
+                    MIRROR_URL="mirrors.ustc.edu.cn/debian"
+                else
+                    MIRROR_URL="mirrors.ustc.edu.cn/ubuntu"
+                fi
                 MIRROR_NAME="USTC Mirror"
                 ;;
             2)
-                MIRROR_URL="mirrors.tuna.tsinghua.edu.cn"
+                if [[ "$OS" == *"Debian"* ]]; then
+                    MIRROR_URL="mirrors.tuna.tsinghua.edu.cn/debian"
+                else
+                    MIRROR_URL="mirrors.tuna.tsinghua.edu.cn/ubuntu"
+                fi
                 MIRROR_NAME="TUNA Mirror"
                 ;;
             3)
-                MIRROR_URL="mirrors.aliyun.com"
+                if [[ "$OS" == *"Debian"* ]]; then
+                    MIRROR_URL="mirrors.aliyun.com/debian"
+                else
+                    MIRROR_URL="mirrors.aliyun.com/ubuntu"
+                fi
                 MIRROR_NAME="Aliyun Mirror"
                 ;;
             *)
