@@ -275,25 +275,17 @@ install_docker() {
         apt-get purge -y docker-ce docker-ce-cli containerd.io 2>/dev/null || true
         rm -rf /var/lib/docker /var/lib/containerd
 
-        # 尝试使用官方安装脚本
-        echo "Attempting automatic Docker installation..."
-        if curl -fsSL https://get.docker.com -o get-docker.sh; then
-            if sh get-docker.sh; then
-                echo "Docker installed via official script"
-            else
-                # 脚本安装失败时执行手动安装
-                echo "Automatic installation failed, switching to manual install..."
-                apt-get update
-                apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common
-                
-                # 使用国内镜像源
-                curl -fsSL https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-                echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
-                
-                apt-get update
-                apt-get install -y docker-ce docker-ce-cli containerd.io
-            fi
-        fi
+        # 直接进行手动安装
+        echo "Starting manual Docker installation..."
+        apt-get update
+        apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common
+        
+        # 使用国内镜像源
+        curl -fsSL https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+        
+        apt-get update
+        apt-get install -y docker-ce docker-ce-cli containerd.io
 
         # 验证安装
         echo "Verifying Docker installation..."
