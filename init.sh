@@ -5,24 +5,41 @@ set_timezone() {
     {
         # Get current timezone
         current_tz=$(timedatectl show --property=Timezone --value)
-        echo "Current timezone is: $current_tz"
+        echo "Current system timezone: $current_tz"
         
-        # Ask if user wants to change timezone
-        echo "Do you want to change the timezone? (y/n)"
-        read -r change_timezone
+        # Detect timezone by IP
+        echo "Detecting timezone based on IP address..."
+        detected_tz=$(curl -s --max-time 5 http://ip-api.com/line/?fields=timezone || true)
         
-        if [ "$change_timezone" = "y" ]; then
-            # List available timezones and let user choose
+        if [ -n "$detected_tz" ] && timedatectl list-timezones | grep -q "^$detected_tz$"; then
+            echo "Detected location timezone: $detected_tz"
+            echo "Choose an option:"
+            echo "1. Keep current system timezone [$current_tz]"
+            echo "2. Use detected timezone [$detected_tz]"
+            echo "3. Manually select timezone"
+            read -p "Enter choice (1-3): " tz_choice
+            
+            case $tz_choice in
+                2) new_timezone=$detected_tz ;;
+                3) manual_select=true ;;
+                *) return 0 ;;
+            esac
+        else
+            echo "Could not detect timezone automatically"
+            read -p "Would you like to manually select timezone? (y/n): " manual_select
+            [ "$manual_select" = "y" ] || return 0
+        fi
+
+        if [ "$manual_select" = "true" ] || [ "$manual_select" = "y" ]; then
             echo "Available timezones:"
             timedatectl list-timezones
-            
-            echo "Enter your timezone (e.g., Asia/Shanghai):"
-            read -r new_timezone
-            
-            # Set new timezone
+            read -p "Enter your timezone (e.g., Asia/Shanghai): " new_timezone
+        fi
+
+        # Set new timezone if selected
+        if [ -n "$new_timezone" ]; then
             if timedatectl set-timezone "$new_timezone"; then
                 echo "Timezone successfully set to: $new_timezone"
-                # Sync hardware clock
                 hwclock --systohc
             else
                 echo "Failed to set timezone"
@@ -252,73 +269,57 @@ EOF
 # 7. Install Docker
 install_docker() {
     {
-        # Remove old versions if they exist
-        for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
-            apt-get remove $pkg 2>/dev/null || true
-        done
+        # 更彻底的旧版本清理
+        echo "Removing all Docker components..."
+        apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
+        apt-get purge -y docker-ce docker-ce-cli containerd.io 2>/dev/null || true
+        rm -rf /var/lib/docker /var/lib/containerd
 
-        # Clean up old Docker GPG keys and repository files
-        rm -f /etc/apt/keyrings/docker.gpg
-        rm -f /etc/apt/sources.list.d/docker.list
+        # 尝试使用官方安装脚本
+        echo "Attempting automatic Docker installation..."
+        if curl -fsSL https://get.docker.com -o get-docker.sh; then
+            if sh get-docker.sh; then
+                echo "Docker installed via official script"
+            else
+                # 脚本安装失败时执行手动安装
+                echo "Automatic installation failed, switching to manual install..."
+                apt-get update
+                apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common
+                
+                # 使用国内镜像源
+                curl -fsSL https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+                
+                apt-get update
+                apt-get install -y docker-ce docker-ce-cli containerd.io
+            fi
+        fi
 
-        # Install prerequisites
-        $PKG_INSTALL apt-transport-https ca-certificates curl gnupg lsb-release
-
-        # Add Docker's official GPG key with error handling
-        install -m 0755 -d /etc/apt/keyrings
-        curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-        chmod a+r /etc/apt/keyrings/docker.gpg
-
-        # Add Docker repository with error checking
-        if ! echo \
-            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]') \
-            $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null; then
-            handle_error "Docker Repository Setup" "Failed to add Docker repository"
+        # 验证安装
+        echo "Verifying Docker installation..."
+        if ! docker --version; then
+            handle_error "Docker Verification" "Docker installation failed"
             return 1
         fi
 
-        # Update package list with specific error handling for Docker repository
-        if ! $PKG_UPDATE; then
-            # If update fails, try to fix potential issues
-            rm -f /etc/apt/keyrings/docker.gpg
-            curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-            chmod a+r /etc/apt/keyrings/docker.gpg
-            $PKG_UPDATE
-        fi
-
-        # Install Docker packages
-        $PKG_INSTALL docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-        # Create docker config directory
-        mkdir -p /etc/docker
-
-        # Configure Docker daemon
-        cat > /etc/docker/daemon.json << EOF
-{
-    "registry-mirrors": [
-        "https://mirror.ccs.tencentyun.com",
-        "https://hub-mirror.c.163.com",
-        "https://mirror.baidubce.com"
-    ]
-}
-EOF
-
-        # Start and enable Docker
-        systemctl enable docker
-        systemctl start docker
-
-        # Add new user to docker group if user was created
+        # 配置用户权限（即使使用脚本安装也需要）
         if [ "$create_user_choice" = "y" ]; then
+            if ! getent group docker >/dev/null; then
+                groupadd docker
+            fi
             usermod -aG docker "$new_username"
         fi
 
-        # Create symbolic link for docker-compose
-        ln -sf $(which docker-compose) /usr/local/bin/docker-compose
+        # 基础功能验证
+        if ! docker run --rm hello-world; then
+            handle_error "Docker Test" "Hello-world container failed"
+            return 1
+        fi
 
-        # Verify installations
-        echo "Verifying Docker and Docker Compose installations..."
-        docker --version
-        docker compose version
+        # 最终系统更新
+        echo "Performing final system update..."
+        $PKG_UPDATE
+
     } || handle_error "Install Docker" "$?"
 }
 
