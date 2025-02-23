@@ -123,9 +123,11 @@ get_user_choices() {
         add_ssh_key_choice="n"
     fi
 
-    # Choice 4/5: SSH port
-    if [ "$create_user_choice" = "y" ]; then
-        echo -e "\nChoice (4/5): SSH port"
+    # Choice 4/5: SSH port (modified to ask regardless of user creation)
+    echo -e "\nChoice (4/5): SSH port configuration"
+    echo "Do you want to change the SSH port? [y/n]"
+    read -r change_ssh_port
+    if [ "$change_ssh_port" = "y" ]; then
         echo "Enter new SSH port (recommended: greater than 1024):"
         read -r ssh_port
     fi
@@ -134,6 +136,11 @@ get_user_choices() {
     echo -e "\nChoice (5/5): Docker Installation"
     echo "Do you want to install Docker? (y/n)"
     read -r install_docker_choice
+    
+    # Choice 6/6: Install Git
+    echo -e "\nChoice (6/6): Git Installation"
+    echo "Do you want to install Git? (y/n)"
+    read -r install_git_choice
     
     echo -e "\nConfiguration complete. Starting system initialization..."
     echo "----------------------------------------"
@@ -275,17 +282,30 @@ install_docker() {
         apt-get purge -y docker-ce docker-ce-cli containerd.io 2>/dev/null || true
         rm -rf /var/lib/docker /var/lib/containerd
 
-        # 直接进行手动安装
-        echo "Starting manual Docker installation..."
+        # 统一使用中科大镜像源配置
+        echo "Starting Docker installation using USTC mirror..."
         apt-get update
         apt-get install -y apt-transport-https ca-certificates curl gnupg-agent software-properties-common
-        
-        # 使用国内镜像源
-        curl -fsSL https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
-        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://mirrors.ustc.edu.cn/docker-ce/linux/ubuntu $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
-        
+
+        # 通用镜像源配置
+        if [[ "$OS" == *"Ubuntu"* ]]; then
+            MIRROR_PATH="ubuntu"
+            VERSION_CODE=$(lsb_release -cs)
+        elif [[ "$OS" == *"Debian"* ]]; then
+            MIRROR_PATH="debian"
+            VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
+        fi
+
+        # 统一从中科大获取 GPG 密钥
+        curl -fsSL https://mirrors.ustc.edu.cn/docker-ce/linux/$MIRROR_PATH/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://mirrors.ustc.edu.cn/docker-ce/linux/$MIRROR_PATH $VERSION_CODE stable" > /etc/apt/sources.list.d/docker.list
+
         apt-get update
-        apt-get install -y docker-ce docker-ce-cli containerd.io
+        # Debian 需要额外安装组件
+        local pkg_list="docker-ce docker-ce-cli containerd.io"
+        [[ "$OS" == *"Debian"* ]] && pkg_list+=" docker-buildx-plugin docker-compose-plugin"
+        
+        apt-get install -y $pkg_list
 
         # 验证安装
         echo "Verifying Docker installation..."
@@ -344,9 +364,38 @@ EOF
 
         # 最终系统更新
         echo "Performing final system update..."
-        $PKG_UPDATE
+        eval "$PKG_UPDATE"
 
     } || handle_error "Install Docker" "$?"
+}
+
+# 8. Install Git
+install_git() {
+    {
+        if [ "$install_git_choice" = "y" ]; then
+            # 检查是否已安装Git
+            if command -v git &>/dev/null; then
+                echo "Git is already installed. Checking for updates..."
+                
+                # 获取当前版本
+                current_version=$(git --version | awk '{print $3}')
+                
+                # 检查并更新
+                if apt list --upgradable 2>/dev/null | grep -q "^git/"; then
+                    echo "Upgrading Git..."
+                    apt install -y --only-upgrade git
+                    new_version=$(git --version | awk '{print $3}')
+                    echo "Git upgraded from $current_version to $new_version"
+                else
+                    echo "Git is already the latest version ($current_version)"
+                fi
+            else
+                echo "Installing latest version of Git..."
+                apt install -y git
+                echo "Git installed successfully. Version: $(git --version)"
+            fi
+        fi
+    } || handle_error "Install Git" "$?"
 }
 
 # Main program
@@ -356,6 +405,7 @@ main() {
     
     remove_snap
     system_update
+    install_git
     disable_hibernation
     setup_ssh
     
@@ -379,6 +429,12 @@ main() {
         echo -e "\nWarning: The following steps encountered errors:"
         printf '%s\n' "${FAILED_STEPS[@]}"
         echo "Please check $ERROR_LOG for detailed error messages"
+    else
+        # Clean up error log if empty
+        if [ ! -s "$ERROR_LOG" ]; then
+            rm -f "$ERROR_LOG"
+            echo -e "\nNo errors occurred during initialization - error log removed"
+        fi
     fi
 }
 
