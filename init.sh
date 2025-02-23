@@ -24,6 +24,8 @@ else
     exit 1
 fi
 
+# Add near the beginning of the script, after OS detection
+OS_LC=$(echo "$OS" | tr '[:upper:]' '[:lower:]')  # lowercase OS name
 
 # Set system timezone
 set_timezone() {
@@ -131,8 +133,14 @@ get_user_choices() {
     echo "Do you want to change the SSH port? [y/n]"
     read -r change_ssh_port
     if [ "$change_ssh_port" = "y" ]; then
-        echo "Enter new SSH port (recommended: greater than 1024):"
-        read -r ssh_port
+        while true; do
+            read -r -p "Enter new SSH port (recommended: greater than 1024): " ssh_port
+            if [[ "$ssh_port" =~ ^[0-9]+$ ]] && [ "$ssh_port" -gt 1024 ] && [ "$ssh_port" -lt 65536 ]; then
+                break
+            else
+                echo "[ERROR] Invalid port number. Please enter a number between 1024 and 65535"
+            fi
+        done
     fi
 
     # Choice 6/7: Install Docker
@@ -154,12 +162,12 @@ get_user_choices() {
 handle_error() {
     local step=$1
     local error_code=$2
-    local error_msg=$3
-    local max_retries=3
+    local error_msg=${3:-"Unknown error"}  # Add default error message
+    local max_retries=${MAX_RETRIES:-3}
     local retry_count=0
     local wait_time=5
     
-    # 记录错误
+    # Log error
     log_error "$step" "$error_code" "$error_msg"
     
     # 根据错误类型决定是否重试
@@ -558,7 +566,7 @@ install_docker() {
         # 检查系统要求
         if ! check_docker_prerequisites; then
             return 1
-        }
+        fi
         
         # 清理旧版本
         remove_old_docker
@@ -566,12 +574,12 @@ install_docker() {
         # 安装新版本
         if ! install_new_docker; then
             return 1
-        }
+        fi
         
         # 配置Docker
         if ! configure_docker; then
             return 1
-        }
+        fi
         
         # 配置用户权限
         configure_docker_permissions
@@ -749,10 +757,103 @@ manage_backups() {
     find "$backup_dir" -type f -mtime +7 -not -name "*.gz" -exec gzip {} \;
 }
 
+# Add these missing Docker functions
+remove_old_docker() {
+    echo "[INFO] Removing old Docker installations..."
+    apt-get remove -y docker docker-engine docker.io containerd runc || true
+}
+
+install_new_docker() {
+    echo "[INFO] Installing Docker prerequisites..."
+    $PKG_INSTALL \
+        apt-transport-https \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release
+
+    # Add Docker's official GPG key
+    curl -fsSL https://download.docker.com/linux/$OS_LC/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+    # Add Docker repository
+    echo \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$OS_LC \
+        $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    # Install Docker
+    $PKG_UPDATE
+    $PKG_INSTALL docker-ce docker-ce-cli containerd.io
+
+    return $?
+}
+
+configure_docker() {
+    echo "[INFO] Configuring Docker..."
+    
+    # Create docker daemon config directory
+    mkdir -p /etc/docker
+
+    # Configure Docker daemon
+    cat > /etc/docker/daemon.json << EOF
+{
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": "100m",
+        "max-file": "3"
+    }
+}
+EOF
+
+    # Start and enable Docker service
+    systemctl enable docker
+    systemctl start docker
+
+    return $?
+}
+
+verify_docker_installation() {
+    echo "[INFO] Verifying Docker installation..."
+    if docker --version && docker run hello-world; then
+        echo "[SUCCEED] Docker installed and running correctly"
+        return 0
+    else
+        echo "[ERROR] Docker installation verification failed"
+        return 1
+    fi
+}
+
+# Add after loading config
+STOP_ON_ERROR=${STOP_ON_ERROR:-false}
+BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS:-30}
+
+# Add this function near the beginning of the script
+check_security_requirements() {
+    # Check if running as root
+    if [ "$EUID" -ne 0 ]; then 
+        echo "[ERROR] Please run this script with root privileges"
+        exit 1
+    fi
+
+    # Check if password complexity requirements are met
+    if ! grep -q "pam_pwquality.so" /etc/pam.d/common-password; then
+        echo "[WARN] Password complexity requirements not configured"
+    fi
+
+    # Check SSH configuration
+    if [ -f /etc/ssh/sshd_config ]; then
+        if grep -q "PermitRootLogin yes" /etc/ssh/sshd_config; then
+            echo "[WARN] Root login is currently permitted via SSH"
+        fi
+    fi
+}
+
 # Main program
 main() {
     echo "[INIT] Starting system initialization..."
-
+    
+    # Add security check
+    check_security_requirements
+    
     # 初始化变量和日志
     ERROR_LOG="$(dirname "$0")/error.log"
     > "$ERROR_LOG"  # 清空错误日志
