@@ -595,13 +595,6 @@ install_docker() {
                 return 1
             fi
             
-            # Configure user permissions
-            echo "[INFO] Setting up Docker permissions..."
-            if ! configure_docker_permissions; then
-                echo "[WARN] Failed to configure Docker permissions"
-                # Don't return error as Docker is still usable
-            fi
-            
             # Verify installation
             echo "[INFO] Verifying Docker installation..."
             if ! verify_docker_installation; then
@@ -616,32 +609,6 @@ install_docker() {
     fi
 }
 
-configure_docker_permissions() {
-    # Configure permissions for all users needing access to Docker
-    if ! getent group docker >/dev/null; then
-        groupadd docker
-    fi
-    
-    # If a new user was created, add it to the docker group
-    if [ -n "$new_username" ]; then
-        usermod -aG docker "$new_username"
-    fi
-    
-    # Ask whether to configure Docker permissions for other users
-    read -p "Do you want to configure Docker permissions for other users? (y/n): " configure_others
-    if [ "$configure_others" = "y" ]; then
-        while true; do
-            read -p "Enter username (or 'done' to finish): " username
-            [ "$username" = "done" ] && break
-            if id "$username" &>/dev/null; then
-                usermod -aG docker "$username"
-                echo "[SUCCEED] Added $username to docker group"
-            else
-                echo "[ERROR] User $username does not exist"
-            fi
-        done
-    fi
-}
 
 # 8. Install Git
 install_git() {
@@ -709,28 +676,6 @@ cleanup_backups() {
     find "$backup_dir" -name "sources.list.backup.*" -mtime +${BACKUP_RETENTION_DAYS} -delete
 }
 
-# Check system resources
-check_system_resources() {
-    local min_memory=512  # MB
-    local min_disk=5120   # MB
-    
-    # Check memory
-    local total_mem=$(free -m | awk '/^Mem:/{print $2}')
-    if [ "$total_mem" -lt "$min_memory" ]; then
-        echo "[ERROR] Insufficient memory: ${total_mem}MB (minimum: ${min_memory}MB)"
-        return 1
-    fi
-    
-    # Check disk space
-    local free_space=$(df -m / | awk 'NR==2 {print $4}')
-    if [ "$free_space" -lt "$min_disk" ]; then
-        echo "[ERROR] Insufficient disk space: ${free_space}MB (minimum: ${min_disk}MB)"
-        return 1
-    fi
-    
-    return 0
-}
-
 # Check network connectivity
 check_network() {
     local test_hosts=("8.8.8.8" "1.1.1.1")
@@ -768,30 +713,63 @@ manage_backups() {
 
 # Add these missing Docker functions
 remove_old_docker() {
-    echo "[INFO] Removing old Docker installations..."
     apt-get remove -y docker docker-engine docker.io containerd runc || true
 }
 
 install_new_docker() {
-    echo "[INFO] Installing Docker prerequisites..."
-    $PKG_INSTALL \
-        apt-transport-https \
-        ca-certificates \
-        curl \
-        gnupg \
-        lsb-release
+    echo "[INFO] Installing Docker for $OS..."
+    
+    if [[ "$OS" == *"Ubuntu"* ]]; then
+        # Original Ubuntu installation process
+        echo "[INFO] Installing Docker prerequisites for Ubuntu..."
+        $PKG_INSTALL \
+            apt-transport-https \
+            ca-certificates \
+            curl \
+            gnupg \
+            lsb-release
 
-    # Add Docker's official GPG key
-    curl -fsSL https://download.docker.com/linux/$OS_LC/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+        # Add Docker's official GPG key
+        curl -fsSL https://download.docker.com/linux/$OS_LC/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
-    # Add Docker repository
-    echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$OS_LC \
-        $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+        # Add Docker repository
+        echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$OS_LC \
+            $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-    # Install Docker
+    elif [[ "$OS" == *"Debian"* ]]; then
+        # Debian installation process
+        echo "[INFO] Installing Docker prerequisites for Debian..."
+        
+        # Remove old versions if exist
+        for pkg in docker.io docker-doc docker-compose podman-docker containerd runc; do
+            $PKG_INSTALL remove $pkg
+        done
+        
+        # Install prerequisites
+        $PKG_INSTALL \
+            apt-transport-https \
+            ca-certificates \
+            curl \
+            software-properties-common
+
+        # Add Docker's official GPG key
+        curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+        chmod a+r /etc/apt/keyrings/docker.asc
+
+        # Add Docker repository
+        echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+            tee /etc/apt/sources.list.d/docker.list > /dev/null
+    else
+        echo "[ERROR] Unsupported operating system: $OS"
+        return 1
+    fi
+
+    # Update package index and install Docker
     $PKG_UPDATE
-    $PKG_INSTALL docker-ce docker-ce-cli containerd.io
+    $PKG_INSTALL docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
     return $?
 }
@@ -928,4 +906,4 @@ main() {
 }
 
 # Execute main program
-main 
+main
