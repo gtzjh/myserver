@@ -3,13 +3,17 @@
 # Set system timezone
 set_timezone() {
     {
-        # Get current timezone
+        echo -e "${BLUE}[INFO]${NC} Checking system timezone..."
         current_tz=$(timedatectl show --property=Timezone --value)
-        echo "Current system timezone: $current_tz"
+        echo -e "Current system timezone: ${GREEN}$current_tz${NC}"
         
         # Detect timezone by IP
-        echo "Detecting timezone based on IP address..."
+        echo -e "${BLUE}[PROGRESS]${NC} Detecting timezone based on IP..."
+        show_progress 0.1 &
         detected_tz=$(curl -s --max-time 5 http://ip-api.com/line/?fields=timezone || true)
+        kill $! 2>/dev/null
+        wait $! 2>/dev/null
+        printf "\r"
         
         if [ -n "$detected_tz" ] && timedatectl list-timezones | grep -q "^$detected_tz$"; then
             echo "Detected location timezone: $detected_tz"
@@ -39,10 +43,10 @@ set_timezone() {
         # Set new timezone if selected
         if [ -n "$new_timezone" ]; then
             if timedatectl set-timezone "$new_timezone"; then
-                echo "Timezone successfully set to: $new_timezone"
+                echo -e "${GREEN}[SUCCEED]${NC} Timezone successfully set to: $new_timezone"
                 hwclock --systohc
             else
-                echo "Failed to set timezone"
+                echo -e "${RED}[ERROR]${NC} Failed to set timezone"
                 return 1
             fi
         fi
@@ -58,6 +62,7 @@ declare -a FAILED_STEPS=()
 handle_error() {
     local step=$1
     local error_msg=$2
+    echo -e "${RED}[ERROR]${NC} Step failed: $step"
     echo "[$step] Error occurred at $(date '+%Y-%m-%d %H:%M:%S')" >> "$ERROR_LOG"
     echo "Error message: $error_msg" >> "$ERROR_LOG"
     echo "Command: $BASH_COMMAND" >> "$ERROR_LOG"
@@ -204,10 +209,13 @@ setup_ssh() {
 # 5. Create new user
 create_user() {
     {
-        # Create user with home directory
-        useradd -m "$new_username"
+        echo -e "${BLUE}[INFO]${NC} Creating user $new_username..."
+        if ! useradd -m "$new_username"; then
+            echo -e "${RED}[ERROR]${NC} Failed to create user"
+            return 1
+        fi
         
-        # Set password
+        echo -e "${GREEN}[SUCCEED]${NC} User created. Please set password:"
         passwd "$new_username"
         
         # Add to sudo group
@@ -233,6 +241,7 @@ create_user() {
 # 6. Configure SSH
 configure_ssh() {
     {
+        echo -e "${YELLOW}[WARNING]${NC} Changing SSH port will affect current connection!"
         echo "Enter new SSH port (recommended: greater than 1024):"
         read -r ssh_port
 
@@ -269,13 +278,21 @@ Subsystem sftp /usr/lib/openssh/sftp-server
 AllowUsers $new_username
 EOF
 
-        systemctl restart sshd
+        if systemctl restart sshd; then
+            echo -e "${GREEN}[SUCCEED]${NC} SSH service restarted successfully"
+        else
+            echo -e "${RED}[ERROR]${NC} Failed to restart SSH service"
+            return 1
+        fi
     } || handle_error "Configure SSH" "$?"
 }
 
 # 7. Install Docker
 install_docker() {
     {
+        echo -e "${BLUE}[INFO]${NC} Starting Docker installation..."
+        show_progress 2 &
+        
         # 更彻底的旧版本清理
         echo "Removing all Docker components..."
         apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
@@ -308,26 +325,56 @@ install_docker() {
         apt-get install -y $pkg_list
 
         # 验证安装
-        echo "Verifying Docker installation..."
-        if ! docker --version; then
-            handle_error "Docker Verification" "Docker installation failed"
+        if docker --version; then
+            echo -e "${GREEN}[SUCCEED]${NC} Docker $(docker --version | awk '{print $3}') installed"
+        else
+            echo -e "${RED}[ERROR]${NC} Docker installation failed"
             return 1
         fi
 
         # 创建docker配置目录
         mkdir -p /etc/docker
 
-        # 配置镜像加速器（包含多个备用源）
-        echo "Setting up registry mirrors..."
-        cat > /etc/docker/daemon.json << EOF
+        # 检查镜像可用性
+        original_mirrors=(
+            "https://cr.laoyou.ip-ddns.com"
+            "https://docker.1panel.live"
+            "https://hub.fast360.xyz"
+            "https://docker-0.unsee.tech"
+            "https://docker.1panelproxy.com"
+            "https://ccr.ccs.tencentyun.com"
+        )
+        available_mirrors=()
+        
+        echo -e "\nChecking Docker registry mirrors availability:"
+        for mirror in "${original_mirrors[@]}"; do
+            # 提取主机名（去除协议和路径）
+            host=$(echo "$mirror" | sed -e 's|^https*://||' -e 's|/.*$||' -e 's|:.*$||')
+            echo -n "  Checking $host..."
+            
+            # 使用ping检查基本连通性（1个包，2秒超时）
+            if ping -c 1 -W 2 "$host" &>/dev/null; then
+                echo -e " \033[32mOK\033[0m"
+                available_mirrors+=("$mirror")
+            else
+                echo -e " \033[31mUnreachable\033[0m"
+            fi
+        done
+
+        # 处理结果显示
+        if [ ${#available_mirrors[@]} -eq 0 ]; then
+            echo -e "${YELLOW}[WARNING]${NC} All Docker registry mirrors are unreachable"
+        else
+            echo -e "\nAvailable mirrors:"
+            printf '  - %s\n' "${available_mirrors[@]}"
+        fi
+
+        # 生成daemon.json配置
+        echo "Creating docker daemon.json..."
+        cat > /etc/docker/daemon.json <<EOF
 {
     "registry-mirrors": [
-        "https://cr.laoyou.ip-ddns.com",
-        "https://docker.1panel.live",
-        "https://hub.fast360.xyz",
-        "https://docker-0.unsee.tech",
-        "https://docker.1panelproxy.com",
-        "https://ccr.ccs.tencentyun.com"
+        $(IFS=,; echo "${available_mirrors[*]}")
     ],
     "live-restore": true,
     "log-driver": "json-file",
@@ -400,14 +447,21 @@ install_git() {
 
 # Main program
 main() {
+    echo -e "${BLUE}[INIT]${NC} Starting system initialization..."
     set_timezone
     get_user_choices
     
-    remove_snap
-    system_update
-    install_git
-    disable_hibernation
-    setup_ssh
+    {
+        remove_snap
+        system_update
+        install_git
+        disable_hibernation
+        setup_ssh
+    } | while read line; do
+        echo -e "${BLUE}[PROGRESS]${NC} $line"
+        show_progress 0.5 &
+        wait $!
+    done
     
     if [ "$create_user_choice" = "y" ]; then
         create_user
