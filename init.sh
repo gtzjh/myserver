@@ -1,5 +1,37 @@
 #!/bin/bash
 
+# Set system timezone
+set_timezone() {
+    {
+        # Get current timezone
+        current_tz=$(timedatectl show --property=Timezone --value)
+        echo "Current timezone is: $current_tz"
+        
+        # Ask if user wants to change timezone
+        echo "Do you want to change the timezone? (y/n)"
+        read -r change_timezone
+        
+        if [ "$change_timezone" = "y" ]; then
+            # List available timezones and let user choose
+            echo "Available timezones:"
+            timedatectl list-timezones
+            
+            echo "Enter your timezone (e.g., Asia/Shanghai):"
+            read -r new_timezone
+            
+            # Set new timezone
+            if timedatectl set-timezone "$new_timezone"; then
+                echo "Timezone successfully set to: $new_timezone"
+                # Sync hardware clock
+                hwclock --systohc
+            else
+                echo "Failed to set timezone"
+                return 1
+            fi
+        fi
+    } || handle_error "Set Timezone" "$?"
+}
+
 # Initialize error log and error tracking
 ERROR_LOG="$(dirname "$0")/error.log"
 > "$ERROR_LOG"  # Clear error log at start
@@ -104,9 +136,6 @@ remove_snap() {
             # Remove all snap packages
             echo "Removing all snap packages..."
             snap list | awk 'NR>1 {print $1}' | xargs -I {} sudo snap remove {}
-            
-            # Remove snapd
-            apt autoremove --purge snapd -y
             
             # Clean up snap directories
             rm -rf ~/snap/
@@ -228,21 +257,34 @@ install_docker() {
             apt-get remove $pkg 2>/dev/null || true
         done
 
+        # Clean up old Docker GPG keys and repository files
+        rm -f /etc/apt/keyrings/docker.gpg
+        rm -f /etc/apt/sources.list.d/docker.list
+
         # Install prerequisites
         $PKG_INSTALL apt-transport-https ca-certificates curl gnupg lsb-release
 
-        # Add Docker's official GPG key
+        # Add Docker's official GPG key with error handling
         install -m 0755 -d /etc/apt/keyrings
         curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
         chmod a+r /etc/apt/keyrings/docker.gpg
 
-        # Add Docker repository
-        echo \
+        # Add Docker repository with error checking
+        if ! echo \
             "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]') \
-            $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+            $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null; then
+            handle_error "Docker Repository Setup" "Failed to add Docker repository"
+            return 1
+        fi
 
-        # Update package list
-        $PKG_UPDATE
+        # Update package list with specific error handling for Docker repository
+        if ! $PKG_UPDATE; then
+            # If update fails, try to fix potential issues
+            rm -f /etc/apt/keyrings/docker.gpg
+            curl -fsSL https://download.docker.com/linux/$(lsb_release -is | tr '[:upper:]' '[:lower:]')/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+            chmod a+r /etc/apt/keyrings/docker.gpg
+            $PKG_UPDATE
+        fi
 
         # Install Docker packages
         $PKG_INSTALL docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
@@ -282,6 +324,7 @@ EOF
 
 # Main program
 main() {
+    set_timezone
     get_user_choices
     
     remove_snap
