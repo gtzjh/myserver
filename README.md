@@ -48,12 +48,12 @@ A comprehensive bash script for initializing a new Linux system (Debian/Ubuntu),
 
 1. Download the script:
    ```bash
-   wget https://raw.githubusercontent.com/gtzjh/myserver/main/init_system.sh
+   wget https://raw.githubusercontent.com/gtzjh/myserver/main/init.sh
    ```
 
 2. Make it executable:
    ```bash
-   chmod +x init_system.sh
+   chmod +x init.sh
    ```
 
 3. Run with root privileges:

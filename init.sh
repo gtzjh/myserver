@@ -9,11 +9,13 @@ set_timezone() {
         
         # Detect timezone by IP
         echo -e "${BLUE}[PROGRESS]${NC} Detecting timezone based on IP..."
-        show_progress 0.1 &
+        (
+            for i in {1..10}; do
+                sleep 0.1
+                echo "."
+            done
+        ) | show_progress_spinner
         detected_tz=$(curl -s --max-time 5 http://ip-api.com/line/?fields=timezone || true)
-        kill $! 2>/dev/null
-        wait $! 2>/dev/null
-        printf "\r"
         
         if [ -n "$detected_tz" ] && timedatectl list-timezones | grep -q "^$detected_tz$"; then
             echo "Detected location timezone: $detected_tz"
@@ -445,23 +447,55 @@ install_git() {
     } || handle_error "Install Git" "$?"
 }
 
+# 添加分步进度函数
+step_progress() {
+    local total_steps=$1
+    local current_step=0
+    while read line; do
+        ((current_step++))
+        percentage=$((current_step * 100 / total_steps))
+        printf "${BLUE}[PROGRESS]${NC} [%3d%%] %s\n" "$percentage" "$line"
+    done
+}
+
+# 添加旋转进度指示器
+show_progress_spinner() {
+    local i=1
+    local sp="/-\|"
+    printf "${BLUE}[PROGRESS]${NC} "
+    while read -r; do
+        printf "\b${sp:i++%${#sp}:1}"
+    done
+    printf "\b \n"
+}
+
 # Main program
 main() {
     echo -e "${BLUE}[INIT]${NC} Starting system initialization..."
     set_timezone
     get_user_choices
     
-    {
+    # 分步执行并显示进度
+    (
+        echo "Removing snap packages"
         remove_snap
+        
+        echo "Updating system packages"
         system_update
+        
+        echo "Installing Git"
         install_git
+        
+        echo "Disabling hibernation"
         disable_hibernation
+        
+        echo "Setting up SSH service"
         setup_ssh
-    } | while read line; do
-        echo -e "${BLUE}[PROGRESS]${NC} $line"
-        show_progress 0.5 &
-        wait $!
-    done
+    ) | step_progress 5
+    
+    show_progress 0.5 &
+    pid=$!
+    wait $pid 2>/dev/null
     
     if [ "$create_user_choice" = "y" ]; then
         create_user
