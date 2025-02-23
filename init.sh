@@ -8,13 +8,7 @@ set_timezone() {
         echo -e "Current system timezone: ${GREEN}$current_tz${NC}"
         
         # Detect timezone by IP
-        echo -e "${BLUE}[PROGRESS]${NC} Detecting timezone based on IP..."
-        (
-            for i in {1..10}; do
-                sleep 0.1
-                echo "."
-            done
-        ) | show_progress_spinner
+        echo -e "${BLUE}[INFO]${NC} Detecting timezone based on IP..."
         detected_tz=$(curl -s --max-time 5 http://ip-api.com/line/?fields=timezone || true)
         
         if [ -n "$detected_tz" ] && timedatectl list-timezones | grep -q "^$detected_tz$"; then
@@ -102,7 +96,7 @@ get_user_choices() {
     echo "----------------------------------------"
     
     # Choice 1/5: Remove snap
-    echo "Choice (1/5): Remove snap?"
+    echo "Choice (1/6): Remove snap?"
     if [[ "$OS" == *"Ubuntu"* ]]; then
         echo "Do you want to remove snap? (y/n)"
         read -r remove_snap_choice
@@ -111,7 +105,7 @@ get_user_choices() {
     fi
 
     # Choice 2/5: Create new user
-    echo -e "\nChoice (2/5): User creation"
+    echo -e "\nChoice (2/6): User creation"
     echo "Do you want to create a new user? (y/n)"
     read -r create_user_choice
     
@@ -121,7 +115,7 @@ get_user_choices() {
     fi
 
     # Choice 3/5: SSH key
-    echo -e "\nChoice (3/5): SSH configuration"
+    echo -e "\nChoice (3/6): SSH configuration"
     echo "Do you want to add SSH public key? (y/n)"
     read -r add_ssh_key_choice
     
@@ -131,7 +125,7 @@ get_user_choices() {
     fi
 
     # Choice 4/5: SSH port (modified to ask regardless of user creation)
-    echo -e "\nChoice (4/5): SSH port configuration"
+    echo -e "\nChoice (4/6): SSH port configuration"
     echo "Do you want to change the SSH port? [y/n]"
     read -r change_ssh_port
     if [ "$change_ssh_port" = "y" ]; then
@@ -140,7 +134,7 @@ get_user_choices() {
     fi
 
     # Choice 5/5: Install Docker
-    echo -e "\nChoice (5/5): Docker Installation"
+    echo -e "\nChoice (5/6): Docker Installation"
     echo "Do you want to install Docker? (y/n)"
     read -r install_docker_choice
     
@@ -293,8 +287,6 @@ EOF
 install_docker() {
     {
         echo -e "${BLUE}[INFO]${NC} Starting Docker installation..."
-        show_progress 2 &
-        
         # 更彻底的旧版本清理
         echo "Removing all Docker components..."
         apt-get remove -y docker docker-engine docker.io containerd runc 2>/dev/null || true
@@ -447,55 +439,17 @@ install_git() {
     } || handle_error "Install Git" "$?"
 }
 
-# 添加分步进度函数
-step_progress() {
-    local total_steps=$1
-    local current_step=0
-    while read line; do
-        ((current_step++))
-        percentage=$((current_step * 100 / total_steps))
-        printf "${BLUE}[PROGRESS]${NC} [%3d%%] %s\n" "$percentage" "$line"
-    done
-}
-
-# 添加旋转进度指示器
-show_progress_spinner() {
-    local i=1
-    local sp="/-\|"
-    printf "${BLUE}[PROGRESS]${NC} "
-    while read -r; do
-        printf "\b${sp:i++%${#sp}:1}"
-    done
-    printf "\b \n"
-}
-
 # Main program
 main() {
     echo -e "${BLUE}[INIT]${NC} Starting system initialization..."
     set_timezone
     get_user_choices
     
-    # 分步执行并显示进度
-    (
-        echo "Removing snap packages"
-        remove_snap
-        
-        echo "Updating system packages"
-        system_update
-        
-        echo "Installing Git"
-        install_git
-        
-        echo "Disabling hibernation"
-        disable_hibernation
-        
-        echo "Setting up SSH service"
-        setup_ssh
-    ) | step_progress 5
-    
-    show_progress 0.5 &
-    pid=$!
-    wait $pid 2>/dev/null
+    remove_snap        
+    system_update        
+    install_git        
+    disable_hibernation        
+    setup_ssh
     
     if [ "$create_user_choice" = "y" ]; then
         create_user
