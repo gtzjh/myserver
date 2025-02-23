@@ -294,6 +294,31 @@ install_docker() {
             return 1
         fi
 
+        # 创建docker配置目录
+        mkdir -p /etc/docker
+
+        # 配置镜像加速器（包含多个备用源）
+        echo "Setting up registry mirrors..."
+        cat > /etc/docker/daemon.json << EOF
+{
+    "registry-mirrors": [
+        "https://cr.laoyou.ip-ddns.com",
+        "https://docker.1panel.live",
+        "https://hub.fast360.xyz",
+        "https://docker-0.unsee.tech",
+        "https://docker.1panelproxy.com",
+        "https://ccr.ccs.tencentyun.com"
+    ],
+    "live-restore": true,
+    "log-driver": "json-file",
+    "log-opts": {
+        "max-size": "100m",
+        "max-file": "3"
+    }
+}
+EOF
+        sudo systemctl daemon-reload && sudo systemctl restart docker
+
         # 配置用户权限（即使使用脚本安装也需要）
         if [ "$create_user_choice" = "y" ]; then
             if ! getent group docker >/dev/null; then
@@ -310,38 +335,16 @@ install_docker() {
 
         # 配置服务自启动
         echo "Configuring Docker service..."
-        systemctl enable docker  # 设置开机自启
-        systemctl start docker   # 立即启动服务
-
-        # 最终系统更新
-        echo "Performing final system update..."
-        $PKG_UPDATE
-
-        # 创建docker配置目录
-        mkdir -p /etc/docker
-
-        # 配置镜像加速器（包含多个备用源）
-        cat > /etc/docker/daemon.json << EOF
-{
-    "registry-mirrors": [
-        "https://mirror.ccs.tencentyun.com",
-        "https://hub-mirror.c.163.com",
-        "https://mirror.baidubce.com",
-        "https://docker.mirrors.ustc.edu.cn",
-        "https://docker.nju.edu.cn"
-    ],
-    "live-restore": true,
-    "log-driver": "json-file",
-    "log-opts": {
-        "max-size": "100m",
-        "max-file": "3"
-    }
-}
-EOF
+        systemctl enable docker
+        systemctl start docker
 
         # 重启docker使配置生效
         systemctl daemon-reload
         systemctl restart docker
+
+        # 最终系统更新
+        echo "Performing final system update..."
+        $PKG_UPDATE
 
     } || handle_error "Install Docker" "$?"
 }
