@@ -116,14 +116,24 @@ get_user_choices() {
     # Choice 1/7: Select APT mirror
     echo "Choice (1/7): APT Mirror Selection"
     if [[ "$OS" == *"Debian"* ]]; then
+        # Display current mirror
+        echo -e "${BLUE}[INFO]${NC} Current APT mirror configuration:"
+        current_mirror=$(grep -v '^#' /etc/apt/sources.list | grep '^deb' | head -n1 | awk '{print $2}' | sed 's|https://||;s|http://||;s|/.*||')
+        echo -e "Current mirror: ${GREEN}$current_mirror${NC}"
+        
         echo "Please select your preferred mirror:"
         echo "1) USTC Mirror (中国科技大学源)"
         echo "2) TUNA Mirror (清华大学源)"
         echo "3) Aliyun Mirror (阿里云源)"
-        read -r -p "Enter your choice (1-3) [default: 1]: " mirror_choice
-        mirror_choice=${mirror_choice:-1}
+        echo "n) Keep current mirror"
+        read -r -p "Enter your choice (1-3/n) [default: n]: " mirror_choice
+        mirror_choice=${mirror_choice:-n}
         
         case $mirror_choice in
+            1)
+                MIRROR_URL="mirrors.ustc.edu.cn"
+                MIRROR_NAME="USTC Mirror"
+                ;;
             2)
                 MIRROR_URL="mirrors.tuna.tsinghua.edu.cn"
                 MIRROR_NAME="TUNA Mirror"
@@ -133,11 +143,12 @@ get_user_choices() {
                 MIRROR_NAME="Aliyun Mirror"
                 ;;
             *)
-                MIRROR_URL="mirrors.ustc.edu.cn"
-                MIRROR_NAME="USTC Mirror"
+                MIRROR_URL=""
+                MIRROR_NAME="Default Mirror"
+                echo "Keeping current sources"
                 ;;
         esac
-        echo "Selected: $MIRROR_NAME"
+        [ -n "$MIRROR_URL" ] && echo "Selected: $MIRROR_NAME"
     fi
 
     # Choice 2/7: Remove snap

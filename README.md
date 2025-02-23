@@ -4,35 +4,39 @@ A comprehensive bash script for initializing a new Linux system (Debian/Ubuntu),
 
 ## Features
 
-1. **Package Manager Detection**
-   - Automatically detects and uses apt/dnf/yum
-   - Supports Debian, Ubuntu systems
-
-2. **System Cleanup and Update**
-   - Removes snap packages (Ubuntu only)
-   - Performs system update and upgrade
+1. **System Configuration**
+   - Automatic timezone detection and configuration
+   - APT mirror selection (for Debian)
+   - System update and upgrade
    - Disables hibernation (Debian only)
+
+2. **Package Management**
+   - Removes snap packages (Ubuntu only)
+   - Configures APT sources with preferred mirrors (Debian only)
+   - Supports USTC, TUNA, and Aliyun mirrors
 
 3. **SSH Server Setup**
    - Installs and configures SSH server
    - Configures secure SSH settings
    - Disables root login and password authentication
    - Changes default SSH port
+   - Creates backup of SSH configuration
 
 4. **User Management**
    - Creates new user with home directory
-   - Adds user to sudo/wheel group
+   - Adds user to sudo group
    - Sets up SSH key authentication
    - Configures proper permissions for SSH files
 
-5. **Docker Environment**
-   - Installs Docker and Docker Compose
-   - Configures Docker daemon with Chinese mirrors
-   - Sets up user permissions for Docker
-   - Creates backward compatibility links for Docker Compose
+5. **Optional Software Installation**
+   - Docker with Chinese registry mirrors
+   - Git installation and updates
+   - Docker permissions and group setup
+   - Automatic service configuration
 
 6. **Error Handling**
    - Logs all errors to `error.log`
+   - Implements automatic retry for network-related errors
    - Continues execution even if some steps fail
    - Provides summary of failed steps at the end
 
@@ -40,7 +44,7 @@ A comprehensive bash script for initializing a new Linux system (Debian/Ubuntu),
 
 - Root privileges
 - Internet connection
-- One of the supported Linux distributions:
+- Supported Linux distributions:
   - Debian
   - Ubuntu
 
@@ -64,11 +68,14 @@ A comprehensive bash script for initializing a new Linux system (Debian/Ubuntu),
 ## Interactive Inputs Required
 
 The script will prompt for:
-1. Confirmation to remove snap (Ubuntu only)
-2. New username
-3. Password for the new user
-4. SSH public key
-5. Custom SSH port number
+1. Timezone configuration
+2. APT mirror selection (Debian only)
+3. Snap removal confirmation (Ubuntu only)
+4. New username creation
+5. SSH public key addition
+6. Custom SSH port number
+7. Docker installation preference
+8. Git installation preference
 
 ## Security Features
 
@@ -90,7 +97,7 @@ The script will prompt for:
 
 1. **Backup**
    - Always backup important data before running this script
-   - The script creates a backup of the SSH configuration
+   - The script automatically backs up SSH and APT configurations
 
 2. **SSH Access**
    - Keep the SSH port number you choose
@@ -98,19 +105,20 @@ The script will prompt for:
    - Test the new SSH configuration before closing existing sessions
 
 3. **Docker Configuration**
-   - Docker is configured with Chinese mirrors by default
-   - Modify `daemon.json` if different mirrors are needed
+   - Uses multiple registry mirrors for better availability
+   - Configures proper user permissions
+   - Includes automatic service startup
 
 4. **System Specific**
-   - Some features only work on specific distributions
-   - The script automatically detects and adapts to the system
+   - APT mirror configuration only available for Debian
+   - Snap removal only available for Ubuntu
+   - Hibernation disable only applies to Debian
 
-5. **Firewall**
-   - For Debian/Ubuntu, you may need to configure UFW separately
+5. **Error Recovery**
+   - Automatic retry for network-related errors
+   - Detailed logging of all operations
+   - Continues execution even after non-critical failures
 
 ## Troubleshooting
 
-1. Check `error.log` for detailed error messages
-2. Ensure you have root privileges
-3. Verify internet connectivity
-4. Ensure your system is one of the supported distributions
+1. Check `error.log`
