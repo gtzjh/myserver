@@ -26,14 +26,14 @@ set_timezone() {
             esac
         else
             echo "Could not detect timezone automatically"
+            echo "Using default timezone: UTC"
+            new_timezone="UTC"
             read -p "Would you like to manually select timezone? (y/n): " manual_select
-            [ "$manual_select" = "y" ] || return 0
-        fi
-
-        if [ "$manual_select" = "true" ] || [ "$manual_select" = "y" ]; then
-            echo "Available timezones:"
-            timedatectl list-timezones
-            read -p "Enter your timezone (e.g., Asia/Shanghai): " new_timezone
+            if [ "$manual_select" = "y" ]; then
+                echo "Available timezones:"
+                timedatectl list-timezones
+                read -p "Enter your timezone (e.g., Asia/Shanghai): " new_timezone
+            fi
         fi
 
         # Set new timezone if selected
@@ -58,12 +58,30 @@ declare -a FAILED_STEPS=()
 handle_error() {
     local step=$1
     local error_msg=$2
-    echo -e "${RED}[ERROR]${NC} Step failed: $step"
-    echo "[$step] Error occurred at $(date '+%Y-%m-%d %H:%M:%S')" >> "$ERROR_LOG"
-    echo "Error message: $error_msg" >> "$ERROR_LOG"
-    echo "Command: $BASH_COMMAND" >> "$ERROR_LOG"
-    echo "----------------------------------------" >> "$ERROR_LOG"
-    FAILED_STEPS+=("$step")
+    local max_retries=3
+    local retry_count=0
+    
+    while [ $retry_count -lt $max_retries ]; do
+        echo -e "${RED}[ERROR]${NC} Step failed: $step (Attempt $((retry_count + 1))/$max_retries)"
+        echo "[$step] Error occurred at $(date '+%Y-%m-%d %H:%M:%S')" >> "$ERROR_LOG"
+        echo "Error message: $error_msg" >> "$ERROR_LOG"
+        echo "Command: $BASH_COMMAND" >> "$ERROR_LOG"
+        echo "----------------------------------------" >> "$ERROR_LOG"
+        
+        # 对于网络相关错误，等待后重试
+        if echo "$error_msg" | grep -q "Connection timed out\|Network is unreachable"; then
+            sleep 5
+            ((retry_count++))
+            continue
+        fi
+        
+        break
+    done
+    
+    if [ $retry_count -eq $max_retries ]; then
+        FAILED_STEPS+=("$step")
+        return 1
+    fi
 }
 
 # Check if running as root
@@ -237,10 +255,12 @@ create_user() {
 # 6. Configure SSH
 configure_ssh() {
     {
-        echo -e "${YELLOW}[WARNING]${NC} Changing SSH port will affect current connection!"
-        echo "Enter new SSH port (recommended: greater than 1024):"
-        read -r ssh_port
-
+        # 使用之前在 get_user_choices 中获取的 ssh_port
+        if [ -z "$ssh_port" ]; then
+            echo -e "${RED}[ERROR]${NC} SSH port not set"
+            return 1
+        fi
+        
         # Backup original config
         cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
 
@@ -326,56 +346,19 @@ install_docker() {
             return 1
         fi
 
-        # 创建docker配置目录
+        # 处理旧配置文件
+        echo "Configuring Docker registry mirrors..."
         mkdir -p /etc/docker
-
-        # 检查镜像可用性
-        original_mirrors=(
-            "https://cr.laoyou.ip-ddns.com"
-            "https://docker.1panel.live"
-            "https://hub.fast360.xyz"
-            "https://docker-0.unsee.tech"
-            "https://docker.1panelproxy.com"
-            "https://ccr.ccs.tencentyun.com"
-        )
-        available_mirrors=()
-        
-        echo -e "\nChecking Docker registry mirrors availability:"
-        for mirror in "${original_mirrors[@]}"; do
-            # 提取主机名（去除协议和路径）
-            host=$(echo "$mirror" | sed -e 's|^https*://||' -e 's|/.*$||' -e 's|:.*$||')
-            echo -n "  Checking $host..."
-            
-            # 使用ping检查基本连通性（1个包，2秒超时）
-            if ping -c 1 -W 2 "$host" &>/dev/null; then
-                echo -e " \033[32mOK\033[0m"
-                available_mirrors+=("$mirror")
-            else
-                echo -e " \033[31mUnreachable\033[0m"
-            fi
-        done
-
-        # 处理结果显示
-        if [ ${#available_mirrors[@]} -eq 0 ]; then
-            echo -e "${YELLOW}[WARNING]${NC} All Docker registry mirrors are unreachable"
-        else
-            echo -e "\nAvailable mirrors:"
-            printf '  - %s\n' "${available_mirrors[@]}"
-        fi
+        [ -f /etc/docker/daemon.json ] && rm -f /etc/docker/daemon.json
 
         # 生成daemon.json配置
         echo "Creating docker daemon.json..."
         cat > /etc/docker/daemon.json <<EOF
 {
     "registry-mirrors": [
-        $(IFS=,; echo "${available_mirrors[*]}")
-    ],
-    "live-restore": true,
-    "log-driver": "json-file",
-    "log-opts": {
-        "max-size": "100m",
-        "max-file": "3"
-    }
+        "https://docker-0.unsee.tech",
+        "https://docker.1panel.live"
+    ]
 }
 EOF
         sudo systemctl daemon-reload && sudo systemctl restart docker
@@ -383,9 +366,20 @@ EOF
         # 配置用户权限（即使使用脚本安装也需要）
         if [ "$create_user_choice" = "y" ]; then
             if ! getent group docker >/dev/null; then
-                groupadd docker
+                if ! groupadd docker; then
+                    handle_error "Docker Group Creation" "$?"
+                    return 1
+                fi
             fi
-            usermod -aG docker "$new_username"
+            if ! usermod -aG docker "$new_username"; then
+                handle_error "Docker User Permission" "$?"
+                return 1
+            fi
+            # 验证用户是否成功添加到组
+            if ! groups "$new_username" | grep -q docker; then
+                handle_error "Docker Group Verification" "Failed to add user to docker group"
+                return 1
+            fi
         fi
 
         # 基础功能验证
@@ -444,7 +438,6 @@ main() {
     echo -e "${BLUE}[INIT]${NC} Starting system initialization..."
     set_timezone
     get_user_choices
-    
     remove_snap        
     system_update        
     install_git        
