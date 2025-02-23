@@ -118,13 +118,13 @@ select_apt_mirror() {
         
         echo "Please select your preferred mirror:"
         if [[ "$OS" == *"Debian"* ]]; then
-            echo "1) USTC Mirror (中国科技大学源)"
-            echo "2) TUNA Mirror (清华大学源)"
-            echo "3) Aliyun Mirror (阿里云源)"
+            echo "1) USTC Mirror (University of Science and Technology of China)"
+            echo "2) TUNA Mirror (Tsinghua University)"
+            echo "3) Aliyun Mirror (Alibaba Cloud)"
         else  # Ubuntu
-            echo "1) USTC Mirror (中国科技大学源)"
-            echo "2) TUNA Mirror (清华大学源)"
-            echo "3) Aliyun Mirror (阿里云源)"
+            echo "1) USTC Mirror (University of Science and Technology of China)"
+            echo "2) TUNA Mirror (Tsinghua University)"
+            echo "3) Aliyun Mirror (Alibaba Cloud)"
         fi
         echo "n) Keep current mirror"
         read -r -p "Enter your choice (1|2|3|n) [default: n]: " mirror_choice
@@ -499,57 +499,72 @@ configure_apt_sources() {
     {
         echo -e "${BLUE}[INFO]${NC} Configuring APT sources..."
         
-        if [[ "$OS" == *"Debian"* || "$OS" == *"Ubuntu"* ]]; then
+        if [[ "$OS" == *"Debian"* || "$OS" == *"Ubuntu"* ]] && [ -n "$MIRROR_URL" ]; then
             # Backup original sources
-            cp /etc/apt/sources.list /etc/apt/sources.list.backup
+            if [ -f /etc/apt/sources.list ]; then
+                cp /etc/apt/sources.list "/etc/apt/sources.list.backup.$(date +%Y%m%d%H%M%S)"
+                echo -e "${GREEN}[SUCCEED]${NC} Backed up original sources.list"
+            fi
             
             if [[ "$OS" == *"Debian"* ]]; then
                 VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
                 VERSION_NUM=$(. /etc/os-release && echo "$VERSION_ID")
                 
-                echo -e "${BLUE}[INFO]${NC} Using $MIRROR_NAME ($MIRROR_URL)"
+                echo -e "${BLUE}[INFO]${NC} Configuring Debian sources with $MIRROR_NAME ($MIRROR_URL)"
                 
                 # 根据Debian版本配置不同的源
                 if [ "$VERSION_NUM" -ge 12 ]; then
                     # Debian 12 (Bookworm) 及以上版本包含 non-free-firmware
                     cat > /etc/apt/sources.list << EOF
 # Debian $VERSION_CODE repository ($MIRROR_NAME)
-deb https://$MIRROR_URL $VERSION_CODE main contrib non-free non-free-firmware
-deb https://$MIRROR_URL $VERSION_CODE-updates main contrib non-free non-free-firmware
-deb https://$MIRROR_URL $VERSION_CODE-backports main contrib non-free non-free-firmware
-deb https://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free non-free-firmware
+deb http://$MIRROR_URL $VERSION_CODE main contrib non-free non-free-firmware
+deb http://$MIRROR_URL $VERSION_CODE-updates main contrib non-free non-free-firmware
+deb http://$MIRROR_URL $VERSION_CODE-backports main contrib non-free non-free-firmware
+deb http://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free non-free-firmware
 EOF
                 else
                     # Debian 11 (Bullseye) 及以下版本
                     cat > /etc/apt/sources.list << EOF
 # Debian $VERSION_CODE repository ($MIRROR_NAME)
-deb https://$MIRROR_URL $VERSION_CODE main contrib non-free
-deb https://$MIRROR_URL $VERSION_CODE-updates main contrib non-free
-deb https://$MIRROR_URL $VERSION_CODE-backports main contrib non-free
-deb https://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free
+deb http://$MIRROR_URL $VERSION_CODE main contrib non-free
+deb http://$MIRROR_URL $VERSION_CODE-updates main contrib non-free
+deb http://$MIRROR_URL $VERSION_CODE-backports main contrib non-free
+deb http://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free
 EOF
                 fi
             else  # Ubuntu
                 VERSION_CODE=$(. /etc/os-release && echo "$VERSION_CODENAME")
                 
+                echo -e "${BLUE}[INFO]${NC} Configuring Ubuntu sources with $MIRROR_NAME ($MIRROR_URL)"
+                
                 cat > /etc/apt/sources.list << EOF
 # Ubuntu $VERSION_CODE repository ($MIRROR_NAME)
-deb https://$MIRROR_URL $VERSION_CODE main restricted universe multiverse
-deb https://$MIRROR_URL $VERSION_CODE-updates main restricted universe multiverse
-deb https://$MIRROR_URL $VERSION_CODE-backports main restricted universe multiverse
-deb https://$MIRROR_URL $VERSION_CODE-security main restricted universe multiverse
+deb http://$MIRROR_URL $VERSION_CODE main restricted universe multiverse
+deb http://$MIRROR_URL $VERSION_CODE-updates main restricted universe multiverse
+deb http://$MIRROR_URL $VERSION_CODE-backports main restricted universe multiverse
+deb http://$MIRROR_URL $VERSION_CODE-security main restricted universe multiverse
 EOF
             fi
             
-            echo -e "${GREEN}[SUCCEED]${NC} APT sources configured for $OS"
-            echo -e "${GREEN}[SUCCEED]${NC} Using $MIRROR_NAME"
-            echo -e "${GREEN}[SUCCEED]${NC} Old sources backed up to /etc/apt/sources.list.backup"
-            
-            # Update package lists
-            apt update
+            # 验证文件是否成功创建和写入
+            if [ -f /etc/apt/sources.list ] && [ -s /etc/apt/sources.list ]; then
+                echo -e "${GREEN}[SUCCEED]${NC} APT sources configured for $OS"
+                echo -e "${GREEN}[SUCCEED]${NC} Using $MIRROR_NAME"
+                
+                # Update package lists
+                if apt-get update; then
+                    echo -e "${GREEN}[SUCCEED]${NC} APT sources update completed"
+                else
+                    echo -e "${RED}[ERROR]${NC} Failed to update APT sources"
+                    return 1
+                fi
+            else
+                echo -e "${RED}[ERROR]${NC} Failed to write sources.list"
+                return 1
+            fi
             
         else
-            echo -e "${YELLOW}[WARN]${NC} Unsupported system type, skipping APT source configuration"
+            echo -e "${YELLOW}[WARN]${NC} Skipping APT source configuration: either unsupported system or no mirror selected"
         fi
         
     } || handle_error "Configure APT Sources" "$?"
