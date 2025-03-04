@@ -1,10 +1,13 @@
 #!/bin/bash
 
+
 # Check if running as root
 if [ "$EUID" -ne 0 ]; then 
     echo "Please run this script with root privileges"
     exit 1
 fi
+
+
 
 # Check if system is Ubuntu
 if [ -f /etc/os-release ]; then
@@ -24,6 +27,8 @@ fi
 
 # Convert OS name to lowercase
 OS_LC=$(echo "$OS" | tr '[:upper:]' '[:lower:]')
+
+
 
 # Error handling function
 handle_error() {
@@ -73,6 +78,8 @@ handle_error() {
     FAILED_STEPS+=("$step")
     return 1
 }
+
+
 
 # Set system timezone
 set_timezone() {
@@ -151,18 +158,20 @@ set_timezone() {
     } || handle_error "Set Timezone" "$?"
 }
 
+
+
 # Select APT mirror
 select_apt_mirror() {
     echo "[INFO] Current APT mirror configuration:"
     current_mirror=$(grep -v '^#' /etc/apt/sources.list | grep '^deb' | head -n1 | awk '{print $2}' | sed 's|https://||;s|http://||;s|/.*||')
-    echo "Current mirror: $current_mirror"
-    
+    echo -e "\nCurrent mirror: $current_mirror"
     echo "Please select your preferred mirror:"
     echo "1) USTC Mirror (University of Science and Technology of China)"
     echo "2) TUNA Mirror (Tsinghua University)"
     echo "3) Aliyun Mirror (Alibaba Cloud)"
+    echo "4) Official Ubuntu Archive"
     echo "n) Keep current mirror"
-    read -r -p "Enter your choice (1|2|3|n) [default: n]: " mirror_choice
+    read -r -p "Enter your choice (1|2|3|4|n) [default: n]: " mirror_choice
     mirror_choice=${mirror_choice:-n}
     
     case $mirror_choice in
@@ -178,6 +187,10 @@ select_apt_mirror() {
             MIRROR_URL="mirrors.aliyun.com/ubuntu"
             MIRROR_NAME="Aliyun Mirror"
             ;;
+        4)
+            MIRROR_URL="archive.ubuntu.com/ubuntu"
+            MIRROR_NAME="Official Ubuntu Archive"
+            ;;
         *)
             MIRROR_URL=""
             MIRROR_NAME="Default Mirror"
@@ -186,6 +199,8 @@ select_apt_mirror() {
     esac
     [ -n "$MIRROR_URL" ] && echo "Selected: $MIRROR_NAME"
 }
+
+
 
 # Configure APT sources
 configure_apt_sources() {
@@ -251,6 +266,8 @@ EOF
     } || handle_error "Configure APT Sources" "$?"
 }
 
+
+
 # Remove snap
 remove_snap() {
     {
@@ -282,12 +299,16 @@ remove_snap() {
     } || handle_error "Remove Snap" "$?"
 }
 
+
+
 # System update
 system_update() {
     {
         eval "$PKG_UPDATE"
     } || handle_error "System Update" "$?"
 }
+
+
 
 # Disable hibernation (For Debian only)
 disable_hibernation() {
@@ -296,6 +317,8 @@ disable_hibernation() {
         echo "Hibernation disabled"
     } || handle_error "Disable Hibernation" "$?"
 }
+
+
 
 # Configure Docker Registry Mirror
 speed_up_mirror() {
@@ -407,6 +430,7 @@ EOF
 }
 
 
+
 # Install Docker
 install_docker() {
     {
@@ -423,12 +447,24 @@ install_docker() {
                        docker-compose-plugin docker-doc docker-compose podman-docker containerd runc; do
                 apt-get remove -y $pkg
             done
+            apt-get remove docker docker-engine docker.io containerd runc
             # Clean up installation scripts
             rm -f get-docker.sh
         }
 
+        install_docker_from_official_script() {
+            echo "Installing Docker using official script..."
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            chmod +x get-docker.sh
+            sh get-docker.sh 2>&1 | tee /var/log/docker-install.log
+            if ! command -v docker &> /dev/null; then
+                echo "[ERROR] Docker installation failed"
+                return 1
+            fi
+        }
+
         # Install from USTC mirror
-        install_script_from_USTC() {
+        install_docker_from_USTC() {
             echo "Installing Docker from USTC mirror..."
             # Download installation script
             if ! curl -fsSL https://get.docker.com -o get-docker.sh; then
@@ -436,7 +472,6 @@ install_docker() {
                 rm -f get-docker.sh
                 return 1
             fi
-
             # Install using USTC mirror
             echo "Installing Docker using USTC mirror..."
             DOWNLOAD_URL=https://mirrors.ustc.edu.cn/docker-ce sh get-docker.sh || {
@@ -446,12 +481,13 @@ install_docker() {
         }
 
         # Install from Aliyun mirror
-        install_from_aliyun() {
+        install_docker_from_aliyun() {
             echo "Installing Docker from Aliyun mirror..."
             # Add GPG key
             curl -fsSL http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu/gpg | apt-key add -
             # Add APT repository
-            add-apt-repository -y "deb [arch=$(dpkg --print-architecture)] http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable"
+            add-apt-repository -y "deb [arch=$(dpkg --print-architecture)] \
+                http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable"
             # Update and install packages
             apt-get update
             apt-get install -y --no-install-recommends \
@@ -471,28 +507,24 @@ install_docker() {
                 journalctl -u docker.service | tail -n 30
                 return 1
             fi
-
             # Verify service status
             if ! systemctl is-active docker >/dev/null; then
                 echo "[ERROR] Docker service is not running properly"
                 journalctl -u docker.service | tail -n 30
                 return 1
             fi
-
             # Enable auto-start on boot
             echo "Enabling Docker auto-start..."
             if ! systemctl enable docker; then
                 echo "[ERROR] Failed to enable Docker auto-start"
                 return 1
             fi
-
             # Verify Docker version
             echo "Verifying Docker version..."
             docker --version || {
                 echo "[ERROR] Docker command not available"
                 return 1
             }
-
             # Run test container
             echo "Running Docker test..."
             if ! docker run --rm hello-world; then
@@ -521,25 +553,39 @@ install_docker() {
         # Update package lists
         apt-get update
         # Main installation flow
-        if install_script_from_USTC; then
-            echo "[SUCCEED] Docker installation completed"
+        if install_docker_from_official_script; then
+            echo "[SUCCEED] Docker installation via official script completed"
             speed_up_mirror
             after_installation
         else
-            echo "[WARN] USTC mirror installation failed, trying Aliyun..."
+            echo "[WARN] Official script installation failed, trying USTC mirror..."
             clean
-            if install_from_aliyun; then
-                echo "[SUCCEED] Docker installation completed"
+            if install_docker_from_USTC; then
+                echo "[SUCCEED] Docker installation via USTC mirror completed"
                 speed_up_mirror
                 after_installation
             else
-                return 1
+                echo "[WARN] USTC mirror installation failed, trying Aliyun..."
+                clean
+                if install_docker_from_aliyun; then
+                    echo "[SUCCEED] Docker installation via Aliyun mirror completed"
+                    speed_up_mirror
+                    after_installation
+                else
+                    return 1
+                fi
             fi
         fi
         echo "[SUCCEED] Docker installation completed"
 
     } || handle_error "Install Docker" "$?"
 }
+
+
+
+
+
+
 
 # Main program
 main() {
