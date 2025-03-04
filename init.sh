@@ -261,7 +261,8 @@ EOF
                 return 1
             fi
         else
-            echo "[WARN] Skipping APT source configuration: no mirror selected"
+            echo "[INFO] No mirror selected, keeping default configuration"
+            return 0  # 显式返回成功状态
         fi
     } || handle_error "Configure APT Sources" "$?"
 }
@@ -604,12 +605,6 @@ install_docker() {
                 echo "[ERROR] Docker command not available"
                 return 1
             }
-            # Run test container
-            echo "Running Docker test..."
-            if ! docker run --rm hello-world; then
-                echo "[ERROR] Docker test failed"
-                return 1
-            fi
         }
 
         # Main installation
@@ -708,6 +703,13 @@ main() {
         read -p "Do you want to configure Docker registry mirrors? (y/n): " mirror_choice
         if [[ "$mirror_choice" =~ [yY] ]]; then
             steps+=("speed_up_mirror")
+        fi
+
+        # Run test container after installation and configuration
+        echo "Running Docker test..."
+        if ! docker run --rm hello-world; then
+            echo "[ERROR] Docker test failed"
+            return 1
         fi
     fi
 
