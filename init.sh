@@ -47,7 +47,7 @@ handle_error() {
             ;;
         100|101|102)  # Network errors
             local retry_command
-            # 获取实际失败命令
+            # Get actual failed command
             retry_command=$(fc -ln -0 2>/dev/null || echo "$BASH_COMMAND")
             while [ $retry_count -lt $max_retries ]; do
                 echo "[RETRY] Retrying: $retry_command"
@@ -56,7 +56,7 @@ handle_error() {
                     return 0
                 fi
                 sleep $wait_time
-                ((wait_time += 5))  # 改为线性增加
+                ((wait_time += 5))  # Changed to linear increase
                 ((retry_count++))
             done
             ;;
@@ -297,11 +297,119 @@ disable_hibernation() {
     } || handle_error "Disable Hibernation" "$?"
 }
 
+# Configure Docker Registry Mirror
+speed_up_mirror() {
+    {
+        echo "[INFO] Configuring Docker registry mirrors..."
+        
+        # Check if Docker is installed
+        if ! command -v docker &> /dev/null; then
+            echo "[ERROR] Docker is not installed, cannot configure registry mirrors"
+            return 1
+        fi
+        
+        # Create Docker daemon directory if it doesn't exist
+        mkdir -p /etc/docker
+        
+        # Define available mirrors
+        declare -a available_mirrors=(
+            "registry.docker-cn.com"
+            "hub-mirror.c.163.com"
+            "mirror.baidubce.com"
+            "docker-0.unsee.tech"
+            "docker-cf.registry.cyou"
+            "docker.1panel.live"
+            "cr.laoyou.ip-ddns.com"
+            "image.cloudlayer.icu"
+            "hub.fast360.xyz"
+            "docker.1panelproxy.com"
+            "docker.tbedu.top"
+            "dockerpull.cn"
+            "docker.m.daocloud.io"
+            "hub.rat.dev"
+            "docker.kejilion.pro"
+            "docker.hlmirror.com"
+            "docker.imgdb.de"
+            "docker.melikeme.cn"
+            "ccr.ccs.tencentyun.com"
+            "pull.loridocker.com"
+        )
+        
+        # Array to store working mirrors
+        declare -a working_mirrors=()
+        
+        echo "Testing mirror connectivity..."
+        for mirror in "${available_mirrors[@]}"; do
+            echo -n "Testing $mirror: "
+            if ping -c 3 -W 2 "$mirror" >/dev/null 2>&1; then
+                echo "SUCCESS - Mirror is reachable"
+                working_mirrors+=("https://$mirror")
+            else
+                echo "FAILED - Mirror is unreachable"
+            fi
+        done
+        
+        # Check if we have any working mirrors
+        if [ ${#working_mirrors[@]} -eq 0 ]; then
+            echo "[ERROR] No working Docker mirrors found. Cannot configure registry mirrors."
+            return 1
+        fi
+        
+        echo "Found ${#working_mirrors[@]} working mirrors."
+        
+        # Create JSON array structure for registry-mirrors
+        registry_mirrors_json="["
+        for ((i=0; i<${#working_mirrors[@]}; i++)); do
+            registry_mirrors_json+="\"${working_mirrors[$i]}\""
+            if [ $i -lt $((${#working_mirrors[@]}-1)) ]; then
+                registry_mirrors_json+=", "
+            fi
+        done
+        registry_mirrors_json+="]"
+        
+        # Create configuration file
+        echo "Creating Docker daemon configuration file with working mirrors..."
+        cat > /etc/docker/daemon.json <<EOF
+{
+  "registry-mirrors": $registry_mirrors_json
+}
+EOF
+
+        # Verify file creation
+        if [ ! -f /etc/docker/daemon.json ]; then
+            echo "[ERROR] Failed to create Docker daemon configuration file"
+            return 1
+        fi
+        
+        # Display selected mirrors
+        echo "Selected mirrors:"
+        for mirror in "${working_mirrors[@]}"; do
+            echo "  - $mirror"
+        done
+        
+        # Restart Docker service
+        echo "Restarting Docker service to apply mirror configuration..."
+        if ! systemctl restart docker; then
+            echo "[ERROR] Failed to restart Docker service"
+            journalctl -u docker.service | tail -n 30
+            return 1
+        fi
+        
+        # Verify Docker service is running
+        if ! systemctl is-active docker >/dev/null; then
+            echo "[ERROR] Docker service failed to start after configuration"
+            journalctl -u docker.service | tail -n 30
+            return 1
+        fi
+        
+        echo "[SUCCEED] Docker registry mirrors configured successfully"
+    } || handle_error "Configure Docker Registry Mirror" "$?"
+}
+
+
 # Install Docker
 install_docker() {
     {
-        echo "[INFO] Starting Docker installation..."
-
         # Clean old Docker components
         clean() {
             echo "Cleaning old Docker components..."
@@ -318,24 +426,41 @@ install_docker() {
             # Clean up installation scripts
             rm -f get-docker.sh
         }
-        # Perform cleanup
-        clean
 
-        # Install required dependencies
-        echo "Installing system dependencies..."
-        required_pkgs=(
-            apt-transport-https 
-            ca-certificates 
-            curl 
-            software-properties-common
-            gnupg
-        )
-        if ! apt-get install -y --no-install-recommends "${required_pkgs[@]}"; then
-            echo "[ERROR] Dependency installation failed"
-            return 1
-        fi
-        # Update package lists
-        apt-get update
+        # Install from USTC mirror
+        install_script_from_USTC() {
+            echo "Installing Docker from USTC mirror..."
+            # Download installation script
+            if ! curl -fsSL https://get.docker.com -o get-docker.sh; then
+                echo "[ERROR] Failed to download Docker installation script"
+                rm -f get-docker.sh
+                return 1
+            fi
+
+            # Install using USTC mirror
+            echo "Installing Docker using USTC mirror..."
+            DOWNLOAD_URL=https://mirrors.ustc.edu.cn/docker-ce sh get-docker.sh || {
+                echo "[ERROR] Docker installation failed"
+                return 1
+            }
+        }
+
+        # Install from Aliyun mirror
+        install_from_aliyun() {
+            echo "Installing Docker from Aliyun mirror..."
+            # Add GPG key
+            curl -fsSL http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu/gpg | apt-key add -
+            # Add APT repository
+            add-apt-repository -y "deb [arch=$(dpkg --print-architecture)] http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable"
+            # Update and install packages
+            apt-get update
+            apt-get install -y --no-install-recommends \
+                docker-ce \
+                docker-ce-cli \
+                containerd.io \
+                docker-buildx-plugin \
+                docker-compose-plugin
+        }
 
         # Post-installation configuration
         after_installation() {
@@ -376,55 +501,43 @@ install_docker() {
             fi
         }
 
-        # Install from USTC mirror
-        install_script_from_USTC() {
-            echo "Installing Docker from USTC mirror..."
-            # Download installation script
-            if ! curl -fsSL https://get.docker.com -o get-docker.sh; then
-                echo "[ERROR] Failed to download Docker installation script"
-                rm -f get-docker.sh
-                return 1
-            fi
-
-            # Install using USTC mirror
-            echo "Installing Docker using USTC mirror..."
-            DOWNLOAD_URL=https://mirrors.ustc.edu.cn/docker-ce sh get-docker.sh || {
-                echo "[ERROR] Docker installation failed"
-                return 1
-            }
-        }
-
-        # Install from Aliyun mirror
-        install_from_aliyun() {
-            echo "Installing Docker from Aliyun mirror..."
-            # Add GPG key
-            curl -fsSL http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu/gpg | apt-key add -
-            # Add APT repository
-            add-apt-repository -y "deb [arch=$(dpkg --print-architecture)] http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable"
-            # Update and install packages
-            apt-get update
-            apt-get install -y --no-install-recommends \
-                docker-ce \
-                docker-ce-cli \
-                containerd.io \
-                docker-buildx-plugin \
-                docker-compose-plugin
-        }
-
+        # Main installation
+        echo "[INFO] Starting Docker installation..."
+        # Perform cleanup
+        clean
+        # Install required dependencies
+        echo "Installing system dependencies..."
+        required_pkgs=(
+            apt-transport-https 
+            ca-certificates 
+            curl 
+            software-properties-common
+            gnupg
+        )
+        if ! apt-get install -y --no-install-recommends "${required_pkgs[@]}"; then
+            echo "[ERROR] Dependency installation failed"
+            return 1
+        fi
+        # Update package lists
+        apt-get update
         # Main installation flow
         if install_script_from_USTC; then
+            echo "[SUCCEED] Docker installation completed"
+            speed_up_mirror
             after_installation
         else
             echo "[WARN] USTC mirror installation failed, trying Aliyun..."
             clean
             if install_from_aliyun; then
+                echo "[SUCCEED] Docker installation completed"
+                speed_up_mirror
                 after_installation
             else
                 return 1
             fi
         fi
-
         echo "[SUCCEED] Docker installation completed"
+
     } || handle_error "Install Docker" "$?"
 }
 
@@ -439,7 +552,7 @@ main() {
     
     # 询问是否安装Docker
     local install_docker=false
-    read -p "是否需要安装Docker？(y/n): " docker_choice
+    read -p "Do you want to install Docker? (y/n): " docker_choice
     if [[ "$docker_choice" =~ [yY] ]]; then
         install_docker=true
     fi
@@ -461,6 +574,12 @@ main() {
     # 添加Docker安装步骤
     if $install_docker; then
         steps+=("install_docker")
+        
+        # 询问是否配置Docker镜像加速器
+        read -p "Do you want to configure Docker registry mirrors? (y/n): " mirror_choice
+        if [[ "$mirror_choice" =~ [yY] ]]; then
+            steps+=("speed_up_mirror")
+        fi
     fi
     
     # Execute steps
@@ -471,7 +590,7 @@ main() {
             echo "[ERROR] Step $step failed"
             # 关键步骤失败时中止
             if [[ "$step" == "configure_apt_sources" ]]; then
-                echo "[FATAL] APT源配置失败，无法继续"
+                echo "[FATAL] APT source configuration failed, unable to continue"
                 break
             fi
         fi
