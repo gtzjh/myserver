@@ -61,7 +61,7 @@ handle_error() {
                     return 0
                 fi
                 sleep $wait_time
-                ((wait_time += 5))  # Changed to linear increase
+                ((wait_time += 5))  # Linear backoff
                 ((retry_count++))
             done
             ;;
@@ -88,11 +88,11 @@ set_timezone() {
         current_tz=$(timedatectl show --property=Timezone --value)
         echo "Current system timezone: $current_tz"
         
-        # 增加超时和错误处理
+        # Add timeout and error handling
         echo "[INFO] Detecting timezone based on IP..."
         detected_tz=$(curl -s --max-time 5 --retry 2 http://ip-api.com/line/?fields=timezone 2>/dev/null || true)
         
-        # 只有当检测到有效时区时才显示选项2
+        # Only show option 2 when valid timezone is detected
         valid_detected_tz=false
         if [ -n "$detected_tz" ] && timedatectl list-timezones | grep -q "^$detected_tz$"; then
             valid_detected_tz=true
@@ -106,7 +106,7 @@ set_timezone() {
         echo "3. Manually select timezone"
         read -p "Enter choice (1-3): " tz_choice
 
-        # 当选项2不可用时处理无效输入
+        # Handle invalid input when option 2 is unavailable
         if ! $valid_detected_tz && [ "$tz_choice" == "2" ]; then
             echo "[ERROR] Invalid selection, detected timezone not available"
             return 1
@@ -211,7 +211,7 @@ configure_apt_sources() {
             local backup_dir="/etc/apt/backups"
             mkdir -p "$backup_dir"
             
-            # 增加源文件存在性检查
+            # Check if source file exists
             if [ -f /etc/apt/sources.list ]; then
                 local backup_file="$backup_dir/sources.list.backup.$(date +%Y%m%d%H%M%S)"
                 if ! cp -v /etc/apt/sources.list "$backup_file"; then
@@ -222,7 +222,7 @@ configure_apt_sources() {
                 echo "[WARN] /etc/apt/sources.list does not exist, creating new"
             fi
             
-            # 确保获取正确的版本代号
+            # Ensure correct version code
             if [ -f /etc/os-release ]; then
                 . /etc/os-release
                 VERSION_CODE=${VERSION_CODENAME:-$(echo $VERSION_ID | tr -d .)}
@@ -275,17 +275,17 @@ remove_snap() {
         read -r remove_snap_choice
         
         if [ "$remove_snap_choice" = "y" ]; then
-            # 增加存在性检查
+            # Check if snap exists
             if command -v snap >/dev/null 2>&1; then
-                # 先停止服务
+                # Stop service
                 systemctl stop snapd.service snapd.socket
                 
-                # 更安全的删除方式
+                # Safer removal
                 for pkg in $(snap list | awk 'NR>1 {print $1}'); do
                     snap remove --purge "$pkg" || true
                 done
                 
-                # 增加存在性检查再删除
+                # Check existence before deletion
                 [ -d /snap ] && rm -rf /snap
                 [ -d /var/snap ] && rm -rf /var/snap
                 [ -d /var/lib/snapd ] && rm -rf /var/lib/snapd
@@ -336,6 +336,10 @@ speed_up_mirror() {
         
         # Define available mirrors
         declare -a available_mirrors=(
+            "docker.io"  # Docker官方仓库
+            "mirror.gcr.io"  # Google镜像
+            "azurecr.io"  # Azure容器仓库
+            "public.ecr.aws"  # AWS公共镜像
             "registry.docker-cn.com"
             "hub-mirror.c.163.com"
             "mirror.baidubce.com"
@@ -362,13 +366,30 @@ speed_up_mirror() {
         declare -a working_mirrors=()
         
         echo "Testing mirror connectivity..."
+        max_mirrors=6  # 设置最大需要找到的可用镜像数
         for mirror in "${available_mirrors[@]}"; do
-            echo -n "Testing $mirror: "
-            if ping -c 3 -W 2 "$mirror" >/dev/null 2>&1; then
-                echo "SUCCESS - Mirror is reachable"
-                working_mirrors+=("https://$mirror")
-            else
-                echo "FAILED - Mirror is unreachable"
+            # 如果已找到足够镜像则提前终止循环
+            if [ ${#working_mirrors[@]} -ge $max_mirrors ]; then
+                echo "Found ${max_mirrors} working mirrors, stopping further checks"
+                break
+            fi
+            
+            echo "Testing $mirror:"
+            success=false
+            for attempt in {1..6}; do
+                echo -n "  Attempt $attempt/6: "
+                if ping -c 1 -W $((attempt)) "$mirror" >/dev/null 2>&1; then
+                    echo "SUCCESS - Mirror is reachable"
+                    working_mirrors+=("https://$mirror")
+                    success=true
+                    break
+                else
+                    echo "FAILED"
+                    sleep $attempt
+                fi
+            done
+            if ! $success; then
+                echo "  All attempts failed for $mirror"
             fi
         done
         
@@ -454,23 +475,22 @@ install_docker() {
 
         install_docker_from_official_script() {
             echo "Installing Docker using official script..."
+            # Download installation script
             local max_retries=6
-            local wait_time=5
+            local initial_timeout=6  # 初始超时2秒
+            local timeout_increment=6  # 每次增加3秒
             local retry_count=0
             local download_success=false
             
             echo "Downloading Docker installation script..."
             while [ $retry_count -le $max_retries ]; do
-                if curl -fsSL https://get.docker.com -o get-docker.sh; then
+                local current_timeout=$((initial_timeout + timeout_increment * retry_count))
+                echo "Attempt $((retry_count + 1)) with timeout ${current_timeout}s"
+                if curl --max-time $current_timeout -fsSL https://get.docker.com -o get-docker.sh; then
                     download_success=true
                     break
                 else
                     echo "[WARN] Download attempt $((retry_count + 1))/$((max_retries + 1)) failed"
-                    if [ $retry_count -lt $max_retries ]; then
-                        echo "Waiting ${wait_time} seconds before retry..."
-                        sleep $wait_time
-                        ((wait_time += 5))  # 每次增加5秒等待时间
-                    fi
                     ((retry_count++))
                 fi
             done
@@ -493,22 +513,20 @@ install_docker() {
             echo "Installing Docker from USTC mirror..."
             # Download installation script
             local max_retries=6
-            local wait_time=5
+            local initial_timeout=6  # 初始超时2秒
+            local timeout_increment=6  # 每次增加3秒
             local retry_count=0
             local download_success=false
             
             echo "Downloading Docker installation script..."
             while [ $retry_count -le $max_retries ]; do
-                if curl -fsSL https://get.docker.com -o get-docker.sh; then
+                local current_timeout=$((initial_timeout + timeout_increment * retry_count))
+                echo "Attempt $((retry_count + 1)) with timeout ${current_timeout}s"
+                if curl --max-time $current_timeout -fsSL https://get.docker.com -o get-docker.sh; then
                     download_success=true
                     break
                 else
                     echo "[WARN] Download attempt $((retry_count + 1))/$((max_retries + 1)) failed"
-                    if [ $retry_count -lt $max_retries ]; then
-                        echo "Waiting ${wait_time} seconds before retry..."
-                        sleep $wait_time
-                        ((wait_time += 5))  # 每次增加5秒等待时间
-                    fi
                     ((retry_count++))
                 fi
             done
@@ -525,19 +543,13 @@ install_docker() {
         # Install from Aliyun mirror
         install_docker_from_aliyun() {
             echo "Installing Docker from Aliyun mirror..."
+            apt-get update
             # Add GPG key
             curl -fsSL http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu/gpg | apt-key add -
             # Add APT repository
-            add-apt-repository -y "deb [arch=$(dpkg --print-architecture)] \
-                http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable"
+            add-apt-repository -y "deb [arch=$(dpkg --print-architecture)] http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable"
             # Update and install packages
-            apt-get update
-            apt-get install -y --no-install-recommends \
-                docker-ce \
-                docker-ce-cli \
-                containerd.io \
-                docker-buildx-plugin \
-                docker-compose-plugin
+            apt-get -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
         }
 
         # Post-installation configuration
@@ -578,6 +590,7 @@ install_docker() {
         # Main installation
         echo "[INFO] Starting Docker installation..."
         # Perform cleanup
+        echo "[INFO] Excuting cleanup..."
         clean
         # Install required dependencies
         echo "Installing system dependencies..."
@@ -625,10 +638,6 @@ install_docker() {
 
 
 
-
-
-
-
 # Main program
 main() {
     echo "[INIT] Starting Ubuntu system initialization..."
@@ -638,12 +647,6 @@ main() {
     > "$ERROR_LOG"  # Clear error log
     declare -a FAILED_STEPS=()
     
-    # 询问是否安装Docker
-    local install_docker=false
-    read -p "Do you want to install Docker? (y/n): " docker_choice
-    if [[ "$docker_choice" =~ [yY] ]]; then
-        install_docker=true
-    fi
 
     # Execute initialization steps
     local steps=(
@@ -654,16 +657,23 @@ main() {
         "system_update"
     )
     
-    # 根据系统类型决定是否禁用休眠
+    # Disable hibernation based on OS type
     if [[ "$OS_LC" == *"debian"* ]]; then
         steps+=("disable_hibernation")
     fi
 
-    # 添加Docker安装步骤
+    # Ask about Docker installation
+    local install_docker=false
+    read -p "Do you want to install Docker? (y/n): " docker_choice
+    if [[ "$docker_choice" =~ [yY] ]]; then
+        install_docker=true
+    fi
+
+    # Docker installation steps
     if $install_docker; then
         steps+=("install_docker")
         
-        # 询问是否配置Docker镜像加速器
+        # Ask about Docker registry mirrors
         read -p "Do you want to configure Docker registry mirrors? (y/n): " mirror_choice
         if [[ "$mirror_choice" =~ [yY] ]]; then
             steps+=("speed_up_mirror")
@@ -676,7 +686,7 @@ main() {
         if ! $step; then
             FAILED_STEPS+=("$step")
             echo "[ERROR] Step $step failed"
-            # 关键步骤失败时中止
+            # Abort if critical step fails
             if [[ "$step" == "configure_apt_sources" ]]; then
                 echo "[FATAL] APT source configuration failed, unable to continue"
                 break
@@ -704,4 +714,4 @@ main() {
 }
 
 # Execute main program
-main 
+main 2>&1 | tee log
