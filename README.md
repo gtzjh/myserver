@@ -62,7 +62,7 @@ A comprehensive bash script for initializing a new Linux system (Debian/Ubuntu),
 
 3. Run with root privileges:
    ```bash
-   sudo ./init_system.sh
+   sudo ./init.sh
    ```
 
 ## Interactive Inputs Required
