@@ -324,8 +324,8 @@ disable_hibernation() {
 speed_up_mirror() {
     {
         echo "[INFO] Configuring Docker registry mirrors..."
-        
-        # Check if Docker is installed
+
+        # 原有Docker检查
         if ! command -v docker &> /dev/null; then
             echo "[ERROR] Docker is not installed, cannot configure registry mirrors"
             return 1
@@ -336,14 +336,13 @@ speed_up_mirror() {
         
         # Define available mirrors
         declare -a available_mirrors=(
-            "docker.io"  # Docker官方仓库
-            "mirror.gcr.io"  # Google镜像
-            "azurecr.io"  # Azure容器仓库
-            "public.ecr.aws"  # AWS公共镜像
+            "docker.io"
+            "mirror.gcr.io"
+            "azurecr.io"
+            "public.ecr.aws"
             "registry.docker-cn.com"
             "hub-mirror.c.163.com"
             "mirror.baidubce.com"
-            "docker-0.unsee.tech"
             "docker-cf.registry.cyou"
             "docker.1panel.live"
             "cr.laoyou.ip-ddns.com"
@@ -366,9 +365,8 @@ speed_up_mirror() {
         declare -a working_mirrors=()
         
         echo "Testing mirror connectivity..."
-        max_mirrors=6  # 设置最大需要找到的可用镜像数
+        max_mirrors=6
         for mirror in "${available_mirrors[@]}"; do
-            # 如果已找到足够镜像则提前终止循环
             if [ ${#working_mirrors[@]} -ge $max_mirrors ]; then
                 echo "Found ${max_mirrors} working mirrors, stopping further checks"
                 break
@@ -376,22 +374,33 @@ speed_up_mirror() {
             
             echo "Testing $mirror:"
             success=false
-            for attempt in {1..6}; do
+            for attempt in {1..6}; do 
                 echo -n "  Attempt $attempt/6: "
-                if ping -c 1 -W $((attempt)) "$mirror" >/dev/null 2>&1; then
+                if ping -c 3 -W 6 "$mirror" >/dev/null 2>&1; then
                     echo "SUCCESS - Mirror is reachable"
                     working_mirrors+=("https://$mirror")
                     success=true
                     break
                 else
                     echo "FAILED"
-                    sleep $attempt
                 fi
             done
             if ! $success; then
                 echo "  All attempts failed for $mirror"
             fi
         done
+        
+        # Check if we have any working mirrors
+        if [ ${#working_mirrors[@]} -eq 0 ]; then
+            echo "[WARN] No working mirrors found, using default only"
+        fi
+
+        # 强制添加默认镜像（即使其他都失败）
+        default_mirror="docker-0.unsee.tech"
+        if ! printf '%s\n' "${working_mirrors[@]}" | grep -q "^https://$default_mirror$"; then
+            echo "[WARN] Adding fallback mirror: $default_mirror"
+            working_mirrors+=("https://$default_mirror")
+        fi
         
         # Check if we have any working mirrors
         if [ ${#working_mirrors[@]} -eq 0 ]; then
@@ -446,7 +455,19 @@ EOF
             return 1
         fi
         
+        # 新增配置验证
+        echo "Verifying configuration reload..."
+        sleep 6  # 等待服务完全启动
+        if ! docker info 2>/dev/null | grep -q "Registry Mirrors"; then
+            echo "[WARN] No registry mirrors detected in Docker config"
+        else
+            echo "[SUCCEED] Docker daemon reloaded configuration successfully"
+            echo "Current registry mirrors:"
+            docker info | grep "Registry Mirrors" -A 10 | sed 's/^/  /'
+        fi
+        
         echo "[SUCCEED] Docker registry mirrors configured successfully"
+
     } || handle_error "Configure Docker Registry Mirror" "$?"
 }
 
@@ -610,28 +631,23 @@ install_docker() {
         # Main installation flow
         if install_docker_from_official_script; then
             echo "[SUCCEED] Docker installation via official script completed"
-            speed_up_mirror
-            after_installation
         else
             echo "[WARN] Official script installation failed, trying USTC mirror..."
             clean
             if install_docker_from_USTC; then
                 echo "[SUCCEED] Docker installation via USTC mirror completed"
-                speed_up_mirror
-                after_installation
             else
                 echo "[WARN] USTC mirror installation failed, trying Aliyun..."
                 clean
                 if install_docker_from_aliyun; then
                     echo "[SUCCEED] Docker installation via Aliyun mirror completed"
-                    speed_up_mirror
-                    after_installation
                 else
                     return 1
                 fi
             fi
         fi
         echo "[SUCCEED] Docker installation completed"
+        after_installation
 
     } || handle_error "Install Docker" "$?"
 }
@@ -656,11 +672,21 @@ main() {
         "remove_snap"
         "system_update"
     )
+
+    # ping工具检查
+    if ! command -v ping &>/dev/null; then
+        echo "[WARN] ping command not found, attempting to install..."
+        if ! apt-get update && apt-get install -y iputils-ping; then
+            echo "[ERROR] Failed to install ping utilities"
+            return 1
+        fi
+    fi
     
     # Disable hibernation based on OS type
     if [[ "$OS_LC" == *"debian"* ]]; then
         steps+=("disable_hibernation")
     fi
+
 
     # Ask about Docker installation
     local install_docker=false
@@ -673,13 +699,13 @@ main() {
     if $install_docker; then
         steps+=("install_docker")
         
-        # Ask about Docker registry mirrors
+        # 镜像配置必须在Docker安装之后
         read -p "Do you want to configure Docker registry mirrors? (y/n): " mirror_choice
         if [[ "$mirror_choice" =~ [yY] ]]; then
             steps+=("speed_up_mirror")
         fi
     fi
-    
+
     # Execute steps
     for step in "${steps[@]}"; do
         echo "[INFO] Executing step: $step"
