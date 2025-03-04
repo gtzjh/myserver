@@ -273,6 +273,7 @@ remove_snap() {
     {
         echo "Do you want to remove snap? (y/n)"
         read -r remove_snap_choice
+        echo "Excuting remove snap..."
         
         if [ "$remove_snap_choice" = "y" ]; then
             # Check if snap exists
@@ -309,6 +310,13 @@ system_update() {
 }
 
 
+install_necessary_packages() {
+    apt-get install -y iputils-ping
+    apt-get install -y curl
+    apt-get install -y vim
+    apt-get install -y git
+}
+
 
 # Disable hibernation (For Debian only)
 disable_hibernation() {
@@ -343,6 +351,7 @@ speed_up_mirror() {
             "registry.docker-cn.com"
             "hub-mirror.c.163.com"
             "mirror.baidubce.com"
+            "docker-0.unsee.tech"
             "docker-cf.registry.cyou"
             "docker.1panel.live"
             "cr.laoyou.ip-ddns.com"
@@ -671,16 +680,8 @@ main() {
         "configure_apt_sources"
         "remove_snap"
         "system_update"
+        "install_necessary_packages"
     )
-
-    # ping工具检查
-    if ! command -v ping &>/dev/null; then
-        echo "[WARN] ping command not found, attempting to install..."
-        if ! apt-get update && apt-get install -y iputils-ping; then
-            echo "[ERROR] Failed to install ping utilities"
-            return 1
-        fi
-    fi
     
     # Disable hibernation based on OS type
     if [[ "$OS_LC" == *"debian"* ]]; then
