@@ -46,16 +46,16 @@ handle_error() {
             return 1
             ;;
         100|101|102)  # Network errors
+            local retry_command="$BASH_COMMAND"  # 获取原始命令
             while [ $retry_count -lt $max_retries ]; do
-                echo "[RETRY] Attempting retry $((retry_count + 1))/$max_retries for $step"
-                sleep $wait_time
-                ((wait_time *= 2))
-                ((retry_count++))
-                
-                if "$@"; then
+                echo "[RETRY] Retrying: $retry_command"
+                if eval "$retry_command"; then
                     echo "[SUCCEED] Retry successful"
                     return 0
                 fi
+                sleep $wait_time
+                ((wait_time *= 2))
+                ((retry_count++))
             done
             ;;
         126|127)  # Command not found
@@ -81,7 +81,7 @@ set_timezone() {
         
         # Detect timezone by IP
         echo "[INFO] Detecting timezone based on IP..."
-        detected_tz=$(curl -s --max-time 5 http://ip-api.com/line/?fields=timezone || true)
+        detected_tz=$(curl -s --max-time 5 --retry 2 http://ip-api.com/line/?fields=timezone || true)
         
         # Display timezone options
         echo "Choose an option:"
@@ -123,8 +123,12 @@ set_timezone() {
         if [ -n "$new_timezone" ]; then
             if timedatectl set-timezone "$new_timezone"; then
                 echo "[SUCCEED] Timezone successfully set to: $new_timezone"
-                if ! hwclock --systohc; then
-                    echo "[WARN] Failed to sync hardware clock"
+                if ! hwclock --systohc 2>/dev/null; then
+                    if [ -d /run/wsl ]; then
+                        echo "[INFO] WSL detected, skipping hardware clock sync"
+                    else
+                        echo "[WARN] Failed to sync hardware clock"
+                    fi
                 fi
             else
                 echo "[ERROR] Failed to set timezone"
@@ -209,10 +213,9 @@ EOF
                 echo "[SUCCEED] Using $MIRROR_NAME"
                 
                 # Test new source availability
-                if apt-get update -qq &>/dev/null; then
-                    echo "[SUCCEED] APT sources update completed"
-                else
-                    echo "[ERROR] Failed to update APT sources"
+                if ! apt-get update -qq; then
+                    echo "[ERROR] Failed to update package lists. Output:"
+                    apt-get update 2>&1 | grep -iE 'err|fail'
                     # Restore backup
                     cp "$backup_file" /etc/apt/sources.list
                     echo "[INFO] Restored original sources.list from backup"
@@ -244,7 +247,11 @@ remove_snap() {
             
             # Remove all snap packages
             echo "Removing all snap packages..."
-            snap list | awk 'NR>1 {print $1}' | xargs -I {} sudo snap remove {}
+            if command -v snap >/dev/null 2>&1; then
+                snap list | awk 'NR>1 {print $1}' | xargs -I {} sudo snap remove {}
+            else
+                echo "Snap not installed, skipping removal"
+            fi
             
             # Clean up snap directories
             rm -rf ~/snap/
@@ -267,180 +274,12 @@ system_update() {
     } || handle_error "System Update" "$?"
 }
 
-# Install Docker
-install_docker() {
+# Disable hibernation
+disable_hibernation() {
     {
-        echo "[INFO] Starting Docker installation..."
-        
-        # Check if Docker is already installed
-        if command -v docker &>/dev/null; then
-            echo "[INFO] Docker is already installed. Version: $(docker --version)"
-            read -p "Do you want to reinstall Docker? (y/n): " reinstall
-            if [ "$reinstall" != "y" ]; then
-                echo "[INFO] Skipping Docker installation"
-                return 0
-            fi
-        fi
-        
-        echo "[INFO] We will try three methods to install Docker:"
-        echo "   1. Official installation script (recommended)"
-        echo "   2. Shell script installation"
-        echo "   3. Manual installation"
-        
-        # Method 1: Using official Docker installation script
-        echo "[INFO] Trying Method 1: Official Docker installation script..."
-        if install_docker_official_script; then
-            echo "[SUCCEED] Docker installed successfully using official script"
-            return 0
-        else
-            echo "[WARN] Official script installation failed, trying next method..."
-        fi
-        
-        # Method 2: Using Shell script
-        echo "[INFO] Trying Method 2: Shell script installation..."
-        if install_docker_shell_script; then
-            echo "[SUCCEED] Docker installed successfully using shell script"
-            return 0
-        else
-            echo "[WARN] Shell script installation failed, trying next method..."
-        fi
-        
-        # Method 3: Manual installation (original method)
-        echo "[INFO] Trying Method 3: Manual installation..."
-        if install_docker_manual; then
-            echo "[SUCCEED] Docker installed successfully using manual method"
-            return 0
-        else
-            echo "[ERROR] All Docker installation methods failed!"
-            return 1
-        fi
-    } || handle_error "Install Docker" "$?"
-}
-
-# Method 1: Install Docker using official script
-install_docker_official_script() {
-    echo "[INFO] Downloading official Docker installation script..."
-    if curl -fsSL https://get.docker.com -o get-docker.sh; then
-        echo "[INFO] Running official Docker installation script..."
-        if sh get-docker.sh; then
-            # Clean up
-            rm -f get-docker.sh
-            
-            # Configure Docker daemon
-            configure_docker
-            
-            # Verify installation
-            verify_docker_installation
-            return $?
-        else
-            echo "[ERROR] Failed to run official Docker installation script"
-            # Clean up
-            rm -f get-docker.sh
-            return 1
-        fi
-    else
-        echo "[ERROR] Failed to download official Docker installation script"
-        return 1
-    fi
-}
-
-# Method 2: Install Docker using shell script
-install_docker_shell_script() {
-    echo "[INFO] Downloading test Docker installation script..."
-    if curl -fsSL https://test.docker.com -o test-docker.sh; then
-        echo "[INFO] Running test Docker installation script..."
-        if sh test-docker.sh; then
-            # Clean up
-            rm -f test-docker.sh
-            
-            # Configure Docker daemon
-            configure_docker
-            
-            # Verify installation
-            verify_docker_installation
-            return $?
-        else
-            echo "[ERROR] Failed to run test Docker installation script"
-            # Clean up
-            rm -f test-docker.sh
-            return 1
-        fi
-    else
-        echo "[ERROR] Failed to download test Docker installation script"
-        return 1
-    fi
-}
-
-# Method 3: Install Docker manually (original method)
-install_docker_manual() {
-    echo "[INFO] Attempting manual Docker installation..."
-    
-    # Remove old versions
-    apt-get remove -y docker docker-engine docker.io containerd runc || true
-    
-    # Install prerequisites
-    $PKG_INSTALL \
-        apt-transport-https \
-        ca-certificates \
-        curl \
-        gnupg \
-        lsb-release
-
-    # Add Docker's official GPG key
-    if ! curl -fsSL https://download.docker.com/linux/$OS_LC/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg; then
-        echo "[ERROR] Failed to add Docker's GPG key"
-        return 1
-    fi
-
-    # Add Docker repository
-    echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$OS_LC \
-        $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-    # Update package index and install Docker
-    $PKG_UPDATE
-    if ! $PKG_INSTALL docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
-        echo "[ERROR] Failed to install Docker packages"
-        return 1
-    fi
-
-    # Configure Docker daemon
-    configure_docker
-    
-    # Verify installation
-    verify_docker_installation
-    return $?
-}
-
-# Configure Docker daemon
-configure_docker() {
-    echo "[INFO] Configuring Docker daemon..."
-    mkdir -p /etc/docker
-    cat > /etc/docker/daemon.json << EOF
-{
-    "log-driver": "json-file",
-    "log-opts": {
-        "max-size": "100m",
-        "max-file": "3"
-    }
-}
-EOF
-
-    # Start and enable Docker service
-    systemctl enable docker
-    systemctl start docker
-}
-
-# Verify Docker installation
-verify_docker_installation() {
-    echo "[INFO] Verifying Docker installation..."
-    if docker --version && docker run hello-world; then
-        echo "[SUCCEED] Docker installed and running correctly"
-        return 0
-    else
-        echo "[ERROR] Docker installation verification failed"
-        return 1
-    fi
+        systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+        echo "Hibernation disabled"
+    } || handle_error "Disable Hibernation" "$?"
 }
 
 # Main program
@@ -459,7 +298,7 @@ main() {
         "configure_apt_sources"
         "remove_snap"
         "system_update"
-        "install_docker"
+        "disable_hibernation"
     )
     
     # Execute steps
