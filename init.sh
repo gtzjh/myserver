@@ -454,7 +454,32 @@ install_docker() {
 
         install_docker_from_official_script() {
             echo "Installing Docker using official script..."
-            curl -fsSL https://get.docker.com -o get-docker.sh
+            local max_retries=6
+            local wait_time=5
+            local retry_count=0
+            local download_success=false
+            
+            echo "Downloading Docker installation script..."
+            while [ $retry_count -le $max_retries ]; do
+                if curl -fsSL https://get.docker.com -o get-docker.sh; then
+                    download_success=true
+                    break
+                else
+                    echo "[WARN] Download attempt $((retry_count + 1))/$((max_retries + 1)) failed"
+                    if [ $retry_count -lt $max_retries ]; then
+                        echo "Waiting ${wait_time} seconds before retry..."
+                        sleep $wait_time
+                        ((wait_time += 5))  # 每次增加5秒等待时间
+                    fi
+                    ((retry_count++))
+                fi
+            done
+
+            if [ "$download_success" != "true" ]; then
+                echo "[ERROR] Failed to download Docker script after $((max_retries + 1)) attempts"
+                return 1
+            fi
+
             chmod +x get-docker.sh
             sh get-docker.sh 2>&1 | tee /var/log/docker-install.log
             if ! command -v docker &> /dev/null; then
@@ -467,17 +492,34 @@ install_docker() {
         install_docker_from_USTC() {
             echo "Installing Docker from USTC mirror..."
             # Download installation script
-            if ! curl -fsSL https://get.docker.com -o get-docker.sh; then
-                echo "[ERROR] Failed to download Docker installation script"
-                rm -f get-docker.sh
+            local max_retries=6
+            local wait_time=5
+            local retry_count=0
+            local download_success=false
+            
+            echo "Downloading Docker installation script..."
+            while [ $retry_count -le $max_retries ]; do
+                if curl -fsSL https://get.docker.com -o get-docker.sh; then
+                    download_success=true
+                    break
+                else
+                    echo "[WARN] Download attempt $((retry_count + 1))/$((max_retries + 1)) failed"
+                    if [ $retry_count -lt $max_retries ]; then
+                        echo "Waiting ${wait_time} seconds before retry..."
+                        sleep $wait_time
+                        ((wait_time += 5))  # 每次增加5秒等待时间
+                    fi
+                    ((retry_count++))
+                fi
+            done
+
+            if [ "$download_success" != "true" ]; then
+                echo "[ERROR] Failed to download Docker script after $((max_retries + 1)) attempts"
                 return 1
             fi
-            # Install using USTC mirror
-            echo "Installing Docker using USTC mirror..."
-            DOWNLOAD_URL=https://mirrors.ustc.edu.cn/docker-ce sh get-docker.sh || {
-                echo "[ERROR] Docker installation failed"
-                return 1
-            }
+
+            chmod +x get-docker.sh
+            DOWNLOAD_URL=https://mirrors.ustc.edu.cn/docker-ce sh get-docker.sh
         }
 
         # Install from Aliyun mirror
