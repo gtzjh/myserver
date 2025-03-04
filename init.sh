@@ -273,9 +273,9 @@ remove_snap() {
     {
         echo "Do you want to remove snap? (y/n)"
         read -r remove_snap_choice
-        echo "Excuting remove snap..."
         
         if [ "$remove_snap_choice" = "y" ]; then
+            echo "Excuting remove snap..."
             # Check if snap exists
             if command -v snap >/dev/null 2>&1; then
                 # Stop service
@@ -311,10 +311,16 @@ system_update() {
 
 
 install_necessary_packages() {
+    echo "[INFO] Installing necessary system packages..."
+    echo "[INFO] Installing iputils-ping..."
     apt-get install -y iputils-ping
+    echo "[INFO] Installing curl..."
     apt-get install -y curl
+    echo "[INFO] Installing vim..."
     apt-get install -y vim
+    echo "[INFO] Installing git..."
     apt-get install -y git
+    echo "[SUCCEED] Basic packages installed successfully"
 }
 
 
@@ -570,17 +576,6 @@ install_docker() {
             DOWNLOAD_URL=https://mirrors.ustc.edu.cn/docker-ce sh get-docker.sh
         }
 
-        # Install from Aliyun mirror
-        install_docker_from_aliyun() {
-            echo "Installing Docker from Aliyun mirror..."
-            apt-get update
-            # Add GPG key
-            curl -fsSL http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu/gpg | apt-key add -
-            # Add APT repository
-            add-apt-repository -y "deb [arch=$(dpkg --print-architecture)] http://mirrors.cloud.aliyuncs.com/docker-ce/linux/ubuntu $(lsb_release -cs) stable"
-            # Update and install packages
-            apt-get -y install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-        }
 
         # Post-installation configuration
         after_installation() {
@@ -638,18 +633,27 @@ install_docker() {
         # Update package lists
         apt-get update
         # Main installation flow
-        if install_docker_from_official_script; then
-            echo "[SUCCEED] Docker installation via official script completed"
-        else
-            echo "[WARN] Official script installation failed, trying USTC mirror..."
-            clean
+        current_tz=$(timedatectl show --property=Timezone --value | tr '[:upper:]' '[:lower:]')
+        if [[ "$current_tz" == *"shanghai"* || "$current_tz" == *"chongqing"* ]]; then
             if install_docker_from_USTC; then
                 echo "[SUCCEED] Docker installation via USTC mirror completed"
             else
-                echo "[WARN] USTC mirror installation failed, trying Aliyun..."
+                echo "[WARN] USTC mirror installation failed, trying official script..."
                 clean
-                if install_docker_from_aliyun; then
-                    echo "[SUCCEED] Docker installation via Aliyun mirror completed"
+                if install_docker_from_official_script; then
+                    echo "[SUCCEED] Docker installation via official script completed"
+                else
+                    return 1
+                fi
+            fi
+        else
+            if install_docker_from_official_script; then
+                echo "[SUCCEED] Docker installation via official script completed"
+            else
+                echo "[WARN] Official script installation failed, trying USTC mirror..."
+                clean
+                if install_docker_from_USTC; then
+                    echo "[SUCCEED] Docker installation via USTC mirror completed"
                 else
                     return 1
                 fi
