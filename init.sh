@@ -319,11 +319,9 @@ EOF
 remove_snap() {
     echo "[INFO] Removing snap..."
     {
-        echo "Do you want to remove snap? (y/n)"
-        read -r remove_snap_choice
-        
-        if [ "$remove_snap_choice" = "y" ]; then
-            echo "Excuting remove snap..."
+        # Use the global choice made at the beginning
+        if [ "$global_remove_snap_choice" = "y" ]; then
+            echo "Executing remove snap..."
             # Check if snap exists
             if command -v snap >/dev/null 2>&1; then
                 # Stop service
@@ -344,6 +342,8 @@ remove_snap() {
             else
                 echo "[INFO] Snap not installed, skipping removal"
             fi
+        else
+            echo "[INFO] User chose not to remove snap"
         fi
     } || handle_error "Remove Snap" "$?"
 }
@@ -719,6 +719,9 @@ install_docker() {
 
 
 
+# Declare global variable for snap removal choice
+global_remove_snap_choice="n"
+
 # Main program
 main() {
     echo "[INIT] Starting system initialization..."
@@ -728,6 +731,11 @@ main() {
     > "$ERROR_LOG"  # Clear error log
     declare -a FAILED_STEPS=()
     
+    # Ask about snap removal at the beginning for Ubuntu systems
+    if [[ "$OS_LC" == *"ubuntu"* ]]; then
+        echo "Do you want to remove snap? (y/n)"
+        read -r global_remove_snap_choice
+    fi
 
     # Execute initialization steps
     local steps=(
