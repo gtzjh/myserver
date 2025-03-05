@@ -439,13 +439,13 @@ speed_up_mirror() {
                 if ping -c 3 -W 6 "$mirror" >/dev/null 2>&1; then
                     working_mirrors+=("https://$mirror")
                     success=true
-                    echo "✓ $mirror: 连接成功"
+                    echo "[YES] $mirror: Reachable"
                     break
                 fi
             done
             if ! $success; then
                 # 仅在全部尝试失败后输出一次
-                echo "✗ $mirror: 连接失败"
+                echo "[NO] $mirror: Connection failed"
             fi
         done
         
