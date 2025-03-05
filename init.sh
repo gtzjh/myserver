@@ -90,7 +90,7 @@ set_timezone() {
         
         # Add timeout and error handling
         echo "[INFO] Detecting timezone based on IP..."
-        detected_tz=$(curl -s --max-time 5 --retry 2 http://ip-api.com/line/?fields=timezone 2>/dev/null || true)
+        detected_tz=$(curl -s --max-time 6 --retry 6 http://ip-api.com/line/?fields=timezone 2>/dev/null || true)
         
         # Only show option 2 when valid timezone is detected
         valid_detected_tz=false
@@ -270,7 +270,7 @@ configure_apt_sources() {
 deb http://$MIRROR_URL $VERSION_CODE main contrib non-free non-free-firmware
 deb http://$MIRROR_URL $VERSION_CODE-updates main contrib non-free non-free-firmware
 deb http://$MIRROR_URL $VERSION_CODE-backports main contrib non-free non-free-firmware
-deb http://security.debian.org/debian-security $VERSION_CODE-security main contrib non-free non-free-firmware
+deb http://$MIRROR_URL $VERSION_CODE-security main contrib non-free non-free-firmware
 EOF
             else
                 # Configure Ubuntu sources
@@ -725,7 +725,17 @@ main() {
         "set_timezone"
         "select_apt_mirror"
         "configure_apt_sources"
-        "remove_snap"
+    )
+    
+    # 只在Ubuntu系统中添加remove_snap步骤
+    if [[ "$OS_LC" == *"ubuntu"* ]]; then
+        steps+=("remove_snap")
+    else
+        echo "[INFO] Non-Ubuntu system detected, skipping snap removal"
+    fi
+    
+    # 添加公共步骤
+    steps+=(
         "system_update"
         "install_necessary_packages"
     )
