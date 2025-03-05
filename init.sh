@@ -90,7 +90,7 @@ set_timezone() {
         
         # Add timeout and error handling
         echo "[INFO] Detecting timezone based on IP..."
-        detected_tz=$(curl -s --max-time 6 --retry 6 http://ip-api.com/line/?fields=timezone 2>/dev/null || true)
+        detected_tz=$(curl -s --max-time 10 --retry 10 http://ip-api.com/line/?fields=timezone 2>/dev/null || true)
         
         # Only show option 2 when valid timezone is detected
         valid_detected_tz=false
@@ -270,7 +270,7 @@ configure_apt_sources() {
 deb http://$MIRROR_URL $VERSION_CODE main contrib non-free non-free-firmware
 deb http://$MIRROR_URL $VERSION_CODE-updates main contrib non-free non-free-firmware
 deb http://$MIRROR_URL $VERSION_CODE-backports main contrib non-free non-free-firmware
-deb http://$MIRROR_URL $VERSION_CODE-security main contrib non-free non-free-firmware
+deb http://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free non-free-firmware
 EOF
             else
                 # Configure Ubuntu sources
