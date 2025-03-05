@@ -12,8 +12,8 @@ fi
 # Check if system is Ubuntu
 if [ -f /etc/os-release ]; then
     . /etc/os-release
-    if [[ "$NAME" != *"Ubuntu"* ]]; then
-        echo "This script is only for Ubuntu systems"
+    if [[ "$NAME" != *"Ubuntu"* && "$NAME" != *"Debian"* ]]; then
+        echo "This script is only for Ubuntu or Debian systems"
         exit 1
     fi
     OS=$NAME
@@ -165,31 +165,60 @@ select_apt_mirror() {
     echo "[INFO] Current APT mirror configuration:"
     current_mirror=$(grep -v '^#' /etc/apt/sources.list | grep '^deb' | head -n1 | awk '{print $2}' | sed 's|https://||;s|http://||;s|/.*||')
     echo -e "\nCurrent mirror: $current_mirror"
-    echo "Please select your preferred mirror:"
-    echo "1) USTC Mirror (University of Science and Technology of China)"
-    echo "2) TUNA Mirror (Tsinghua University)"
-    echo "3) Aliyun Mirror (Alibaba Cloud)"
-    echo "4) Official Ubuntu Archive"
+    
+    # 确定操作系统类型
+    if [[ "$OS" == *"Debian"* ]]; then
+        os_type="debian"
+        echo "Please select your preferred Debian mirror:"
+        echo "1) USTC Mirror (University of Science and Technology of China)"
+        echo "2) TUNA Mirror (Tsinghua University)"
+        echo "3) Aliyun Mirror (Alibaba Cloud)"
+        echo "4) Official Debian Archive"
+    else
+        os_type="ubuntu"
+        echo "Please select your preferred Ubuntu mirror:"
+        echo "1) USTC Mirror (University of Science and Technology of China)"
+        echo "2) TUNA Mirror (Tsinghua University)"
+        echo "3) Aliyun Mirror (Alibaba Cloud)"
+        echo "4) Official Ubuntu Archive"
+    fi
+    
     echo "n) Keep current mirror"
     read -r -p "Enter your choice (1|2|3|4|n) [default: n]: " mirror_choice
     mirror_choice=${mirror_choice:-n}
     
     case $mirror_choice in
         1)
-            MIRROR_URL="mirrors.ustc.edu.cn/ubuntu"
+            if [ "$os_type" = "debian" ]; then
+                MIRROR_URL="mirrors.ustc.edu.cn/debian"
+            else
+                MIRROR_URL="mirrors.ustc.edu.cn/ubuntu"
+            fi
             MIRROR_NAME="USTC Mirror"
             ;;
         2)
-            MIRROR_URL="mirrors.tuna.tsinghua.edu.cn/ubuntu"
+            if [ "$os_type" = "debian" ]; then
+                MIRROR_URL="mirrors.tuna.tsinghua.edu.cn/debian"
+            else
+                MIRROR_URL="mirrors.tuna.tsinghua.edu.cn/ubuntu"
+            fi
             MIRROR_NAME="TUNA Mirror"
             ;;
         3)
-            MIRROR_URL="mirrors.aliyun.com/ubuntu"
+            if [ "$os_type" = "debian" ]; then
+                MIRROR_URL="mirrors.aliyun.com/debian"
+            else
+                MIRROR_URL="mirrors.aliyun.com/ubuntu"
+            fi
             MIRROR_NAME="Aliyun Mirror"
             ;;
         4)
-            MIRROR_URL="archive.ubuntu.com/ubuntu"
-            MIRROR_NAME="Official Ubuntu Archive"
+            if [ "$os_type" = "debian" ]; then
+                MIRROR_URL="deb.debian.org/debian"
+            else
+                MIRROR_URL="archive.ubuntu.com/ubuntu"
+            fi
+            MIRROR_NAME="Official Archive"
             ;;
         *)
             MIRROR_URL=""
@@ -231,20 +260,32 @@ configure_apt_sources() {
                 return 1
             fi
             
-            echo "[INFO] Configuring Ubuntu sources with $MIRROR_NAME ($MIRROR_URL)"
+            echo "[INFO] Configuring sources with $MIRROR_NAME ($MIRROR_URL)"
             
-            # Configure Ubuntu sources
-            cat > /etc/apt/sources.list << EOF
+            # 根据操作系统类型配置不同的源
+            if [[ "$OS" == *"Debian"* ]]; then
+                # Configure Debian sources
+                cat > /etc/apt/sources.list << EOF
+# Debian $VERSION_CODE repository ($MIRROR_NAME)
+deb http://$MIRROR_URL $VERSION_CODE main contrib non-free non-free-firmware
+deb http://$MIRROR_URL $VERSION_CODE-updates main contrib non-free non-free-firmware
+deb http://$MIRROR_URL $VERSION_CODE-backports main contrib non-free non-free-firmware
+deb http://security.debian.org/debian-security $VERSION_CODE-security main contrib non-free non-free-firmware
+EOF
+            else
+                # Configure Ubuntu sources
+                cat > /etc/apt/sources.list << EOF
 # Ubuntu $VERSION_CODE repository ($MIRROR_NAME)
 deb http://$MIRROR_URL $VERSION_CODE main restricted universe multiverse
 deb http://$MIRROR_URL $VERSION_CODE-updates main restricted universe multiverse
 deb http://$MIRROR_URL $VERSION_CODE-backports main restricted universe multiverse
 deb http://$MIRROR_URL $VERSION_CODE-security main restricted universe multiverse
 EOF
+            fi
             
             # Verify file creation and content
             if [ -f /etc/apt/sources.list ] && [ -s /etc/apt/sources.list ]; then
-                echo "[SUCCEED] APT sources configured for Ubuntu"
+                echo "[SUCCEED] APT sources configured"
                 echo "[SUCCEED] Using $MIRROR_NAME"
                 
                 # Test new source availability
@@ -262,7 +303,7 @@ EOF
             fi
         else
             echo "[INFO] No mirror selected, keeping default configuration"
-            return 0  # 显式返回成功状态
+            return 0
         fi
     } || handle_error "Configure APT Sources" "$?"
 }
@@ -664,7 +705,7 @@ install_docker() {
 
 # Main program
 main() {
-    echo "[INIT] Starting Ubuntu system initialization..."
+    echo "[INIT] Starting system initialization..."
     
     # Initialize variables and log
     ERROR_LOG="$(dirname "$0")/error.log"
@@ -728,7 +769,7 @@ main() {
     done
 
     # Summary report
-    echo -e "\nUbuntu system initialization completed!"
+    echo -e "\nSystem initialization completed!"
 
     # Check failed steps
     if [ ${#FAILED_STEPS[@]} -gt 0 ]; then
