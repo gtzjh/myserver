@@ -1,8 +1,9 @@
 #!/bin/bash
 
 
+
 # Check if running as root
-if [ "$EUID" -ne 0 ]; then 
+if [ "$EUID" -ne 0 ]; then
     echo "Please run this script with root privileges"
     exit 1
 fi
@@ -83,11 +84,8 @@ handle_error() {
 
 # Set system timezone
 set_timezone() {
-    {
-        echo "[INFO] Checking system timezone..."
-        current_tz=$(timedatectl show --property=Timezone --value)
-        echo "Current system timezone: $current_tz"
-        
+    echo "[INFO] Checking system timezone..."
+    {   
         # Add timeout and error handling
         echo "[INFO] Detecting timezone based on IP..."
         detected_tz=$(curl -s --max-time 10 --retry 10 http://ip-api.com/line/?fields=timezone 2>/dev/null || true)
@@ -99,10 +97,15 @@ set_timezone() {
         fi
 
         echo "Choose an option:"
+
+        current_tz=$(timedatectl show --property=Timezone --value)
+        echo "Current system timezone: $current_tz"
         echo "1. Keep current system timezone [$current_tz]"
+
         if $valid_detected_tz; then
             echo "2. Use detected timezone [$detected_tz]"
         fi
+
         echo "3. Manually select timezone"
         read -p "Enter choice (1-3): " tz_choice
 
@@ -233,8 +236,8 @@ select_apt_mirror() {
 
 # Configure APT sources
 configure_apt_sources() {
+    echo "[INFO] Configuring APT sources..."
     {
-        echo "[INFO] Configuring APT sources..."
         
         if [ -n "$MIRROR_URL" ]; then
             local backup_dir="/etc/apt/backups"
@@ -267,19 +270,19 @@ configure_apt_sources() {
                 # Configure Debian sources
                 cat > /etc/apt/sources.list << EOF
 # Debian $VERSION_CODE repository ($MIRROR_NAME)
-deb http://$MIRROR_URL $VERSION_CODE main contrib non-free non-free-firmware
-deb http://$MIRROR_URL $VERSION_CODE-updates main contrib non-free non-free-firmware
-deb http://$MIRROR_URL $VERSION_CODE-backports main contrib non-free non-free-firmware
-deb http://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free non-free-firmware
+deb https://$MIRROR_URL $VERSION_CODE main contrib non-free non-free-firmware
+deb https://$MIRROR_URL $VERSION_CODE-updates main contrib non-free non-free-firmware
+deb https://$MIRROR_URL $VERSION_CODE-backports main contrib non-free non-free-firmware
+deb https://$MIRROR_URL-security $VERSION_CODE-security main contrib non-free non-free-firmware
 EOF
             else
                 # Configure Ubuntu sources
                 cat > /etc/apt/sources.list << EOF
 # Ubuntu $VERSION_CODE repository ($MIRROR_NAME)
-deb http://$MIRROR_URL $VERSION_CODE main restricted universe multiverse
-deb http://$MIRROR_URL $VERSION_CODE-updates main restricted universe multiverse
-deb http://$MIRROR_URL $VERSION_CODE-backports main restricted universe multiverse
-deb http://$MIRROR_URL $VERSION_CODE-security main restricted universe multiverse
+deb https://$MIRROR_URL $VERSION_CODE main restricted universe multiverse
+deb https://$MIRROR_URL $VERSION_CODE-updates main restricted universe multiverse
+deb https://$MIRROR_URL $VERSION_CODE-backports main restricted universe multiverse
+deb https://$MIRROR_URL $VERSION_CODE-security main restricted universe multiverse
 EOF
             fi
             
@@ -312,6 +315,7 @@ EOF
 
 # Remove snap
 remove_snap() {
+    echo "[INFO] Removing snap..."
     {
         echo "Do you want to remove snap? (y/n)"
         read -r remove_snap_choice
@@ -346,6 +350,7 @@ remove_snap() {
 
 # System update
 system_update() {
+    echo "[INFO] System update..."
     {
         eval "$PKG_UPDATE"
     } || handle_error "System Update" "$?"
@@ -368,6 +373,7 @@ install_necessary_packages() {
 
 # Disable hibernation (For Debian only)
 disable_hibernation() {
+    echo "[INFO] Disabling hibernation..."
     {
         systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
         echo "Hibernation disabled"
@@ -378,8 +384,8 @@ disable_hibernation() {
 
 # Configure Docker Registry Mirror
 speed_up_mirror() {
+    echo "[INFO] Configuring Docker registry mirrors..."
     {
-        echo "[INFO] Configuring Docker registry mirrors..."
 
         # 原有Docker检查
         if ! command -v docker &> /dev/null; then
@@ -539,6 +545,7 @@ EOF
 
 # Install Docker
 install_docker() {
+    echo "[INFO] Installing Docker..."
     {
         # Clean old Docker components
         clean() {
@@ -704,7 +711,6 @@ install_docker() {
         fi
         echo "[SUCCEED] Docker installation completed"
         after_installation
-
     } || handle_error "Install Docker" "$?"
 }
 
@@ -715,7 +721,7 @@ main() {
     echo "[INIT] Starting system initialization..."
     
     # Initialize variables and log
-    ERROR_LOG="$(dirname "$0")/error.log"
+    ERROR_LOG="$(dirname "$0")/init_error.log"
     > "$ERROR_LOG"  # Clear error log
     declare -a FAILED_STEPS=()
     
@@ -725,6 +731,8 @@ main() {
         "set_timezone"
         "select_apt_mirror"
         "configure_apt_sources"
+        "system_update"
+        "install_necessary_packages"
     )
     
     # 只在Ubuntu系统中添加remove_snap步骤
@@ -733,12 +741,7 @@ main() {
     else
         echo "[INFO] Non-Ubuntu system detected, skipping snap removal"
     fi
-    
-    # 添加公共步骤
-    steps+=(
-        "system_update"
-        "install_necessary_packages"
-    )
+
     
     # Disable hibernation based on OS type
     if [[ "$OS_LC" == *"debian"* ]]; then
@@ -767,16 +770,17 @@ main() {
 
     # Execute steps
     for step in "${steps[@]}"; do
+        echo "\n==================================================================="
         echo "[INFO] Executing step: $step"
         if ! $step; then
             FAILED_STEPS+=("$step")
             echo "[ERROR] Step $step failed"
-            # Abort if critical step fails
+            # 记录关键步骤失败但继续执行
             if [[ "$step" == "configure_apt_sources" ]]; then
-                echo "[FATAL] APT source configuration failed, unable to continue"
-                break
+                echo "[WARN] APT source configuration failed, some following steps may not work properly"
             fi
         fi
+        echo "===================================================================\n"
     done
 
     # Summary report
@@ -799,4 +803,4 @@ main() {
 }
 
 # Execute main program
-main 2>&1 | tee log
+main 2>&1 | tee init.log
