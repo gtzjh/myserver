@@ -320,30 +320,26 @@ remove_snap() {
     echo "[INFO] Removing snap..."
     {
         # Use the global choice made at the beginning
-        if [ "$global_remove_snap_choice" = "y" ]; then
-            echo "Executing remove snap..."
-            # Check if snap exists
-            if command -v snap >/dev/null 2>&1; then
-                # Stop service
-                systemctl stop snapd.service snapd.socket
-                
-                # Safer removal
-                for pkg in $(snap list | awk 'NR>1 {print $1}'); do
-                    snap remove --purge "$pkg" || true
-                done
-                
-                # Check existence before deletion
-                [ -d /snap ] && rm -rf /snap
-                [ -d /var/snap ] && rm -rf /var/snap
-                [ -d /var/lib/snapd ] && rm -rf /var/lib/snapd
-                
-                apt-get purge -y snapd
-                apt-mark hold snapd
-            else
-                echo "[INFO] Snap not installed, skipping removal"
-            fi
+        echo "Executing remove snap..."
+        # Check if snap exists
+        if command -v snap >/dev/null 2>&1; then
+            # Stop service
+            systemctl stop snapd.service snapd.socket
+            
+            # Safer removal
+            for pkg in $(snap list | awk 'NR>1 {print $1}'); do
+                snap remove --purge "$pkg" || true
+            done
+            
+            # Check existence before deletion
+            [ -d /snap ] && rm -rf /snap
+            [ -d /var/snap ] && rm -rf /var/snap
+            [ -d /var/lib/snapd ] && rm -rf /var/lib/snapd
+            
+            apt-get purge -y snapd
+            apt-mark hold snapd
         else
-            echo "[INFO] User chose not to remove snap"
+            echo "[INFO] Snap not installed, skipping removal"
         fi
     } || handle_error "Remove Snap" "$?"
 }
@@ -437,21 +433,19 @@ speed_up_mirror() {
                 break
             fi
             
-            echo "Testing $mirror:"
+            # 静默测试镜像，不输出每次尝试结果
             success=false
             for attempt in {1..6}; do 
-                echo -n "  Attempt $attempt/6: "
                 if ping -c 3 -W 6 "$mirror" >/dev/null 2>&1; then
-                    echo "SUCCESS - Mirror is reachable"
                     working_mirrors+=("https://$mirror")
                     success=true
+                    echo "✓ $mirror: 连接成功"
                     break
-                else
-                    echo "FAILED"
                 fi
             done
             if ! $success; then
-                echo "  All attempts failed for $mirror"
+                # 仅在全部尝试失败后输出一次
+                echo "✗ $mirror: 连接失败"
             fi
         done
         
@@ -719,9 +713,6 @@ install_docker() {
 
 
 
-# Declare global variable for snap removal choice
-global_remove_snap_choice="n"
-
 # Main program
 main() {
     echo "[INIT] Starting system initialization..."
@@ -731,12 +722,7 @@ main() {
     > "$ERROR_LOG"  # Clear error log
     declare -a FAILED_STEPS=()
     
-    # Ask about snap removal at the beginning for Ubuntu systems
-    if [[ "$OS_LC" == *"ubuntu"* ]]; then
-        echo "Do you want to remove snap? (y/n)"
-        read -r global_remove_snap_choice
-    fi
-
+    
     # Execute initialization steps
     local steps=(
         "set_timezone"
@@ -745,10 +731,15 @@ main() {
         "system_update"
         "install_necessary_packages"
     )
-    
+
+
     # 只在Ubuntu系统中添加remove_snap步骤
     if [[ "$OS_LC" == *"ubuntu"* ]]; then
-        steps+=("remove_snap")
+        # Ask about snap removal at the beginning for Ubuntu systems
+        read -p "Do you want to remove snap? (y/n): " remove_snap_choice
+        if [[ "$remove_snap_choice" =~ [yY] ]]; then
+            steps+=("remove_snap")
+        fi
     else
         echo "[INFO] Non-Ubuntu system detected, skipping snap removal"
     fi
@@ -776,7 +767,6 @@ main() {
         if [[ "$mirror_choice" =~ [yY] ]]; then
             steps+=("speed_up_mirror")
         fi
-
     fi
 
     # Execute steps
