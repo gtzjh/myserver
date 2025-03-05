@@ -26,6 +26,8 @@ else
     exit 1
 fi
 
+
+
 # Convert OS name to lowercase
 OS_LC=$(echo "$OS" | tr '[:upper:]' '[:lower:]')
 
@@ -550,19 +552,20 @@ install_docker() {
         # Clean old Docker components
         clean() {
             echo "Cleaning old Docker components..."
-            # Remove APT source files
+            # Remove APT source files and GPG keys
             rm -f /etc/apt/sources.list.d/docker.list
-            rm -f /etc/apt/sources.list.d/*docker*.list
-            # Remove old GPG keys
-            rm -f /usr/share/keyrings/docker-archive-keyring.gpg
-            # Uninstall old packages
-            for pkg in docker.io docker-buildx-plugin docker-ce-cli docker-ce-rootless-extras \
-                       docker-compose-plugin docker-doc docker-compose podman-docker containerd runc; do
-                apt-get remove -y $pkg
-            done
-            apt-get remove docker docker-engine docker.io containerd runc
+            rm -rf /etc/apt/sources.list.d/*docker*.list
+            rm -rf /usr/share/keyrings/docker-archive-keyring.gpg
+            
             # Clean up installation scripts
             rm -f get-docker.sh
+            
+            # Uninstall all Docker related packages in one command
+            apt-get remove -y docker.io docker-buildx-plugin docker-ce-cli docker-ce-rootless-extras \
+                          docker-compose-plugin docker-doc docker-compose podman-docker containerd runc \
+                          docker docker-engine docker.io containerd runc
+            
+            apt-get update
         }
 
         install_docker_from_official_script() {
@@ -770,7 +773,8 @@ main() {
 
     # Execute steps
     for step in "${steps[@]}"; do
-        echo "\n==================================================================="
+        echo ""
+        echo "==============================================================================================="
         echo "[INFO] Executing step: $step"
         if ! $step; then
             FAILED_STEPS+=("$step")
@@ -780,7 +784,8 @@ main() {
                 echo "[WARN] APT source configuration failed, some following steps may not work properly"
             fi
         fi
-        echo "===================================================================\n"
+        echo "==============================================================================================="
+        echo ""
     done
 
     # Summary report
