@@ -9,7 +9,7 @@ fi
 
 
 
-# Check if system is Ubuntu
+# Check if system is Ubuntu or Debian
 if [ -f /etc/os-release ]; then
     . /etc/os-release
     if [[ "$NAME" != *"Ubuntu"* && "$NAME" != *"Debian"* ]]; then
@@ -525,6 +525,13 @@ EOF
         
         echo "[SUCCEED] Docker registry mirrors configured successfully"
 
+        # Run test container after installation and configuration
+        echo "Running Docker test..."
+        if ! docker run --rm hello-world; then
+            echo "[ERROR] Docker test failed"
+            return 1
+        fi
+
     } || handle_error "Configure Docker Registry Mirror" "$?"
 }
 
@@ -746,12 +753,6 @@ main() {
             steps+=("speed_up_mirror")
         fi
 
-        # Run test container after installation and configuration
-        echo "Running Docker test..."
-        if ! docker run --rm hello-world; then
-            echo "[ERROR] Docker test failed"
-            return 1
-        fi
     fi
 
     # Execute steps
