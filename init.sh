@@ -382,13 +382,16 @@ disable_hibernation() {
 
 # Configure Docker Registry Mirror
 speed_up_mirror() {
-    echo "[INFO] Configuring Docker registry mirrors..."
+    echo "[INFO] Testing Docker registry mirrors..."
     {
 
-        # 原有Docker检查
-        if ! command -v docker &> /dev/null; then
-            echo "[ERROR] Docker is not installed, cannot configure registry mirrors"
-            return 1
+        # 检查Docker是否安装（不再直接返回错误）
+        local docker_installed=false
+        if command -v docker &> /dev/null; then
+            docker_installed=true
+            echo "[INFO] Docker detected, will configure mirrors after testing"
+        else
+            echo "[INFO] Docker not installed, will only test mirror connectivity"
         fi
         
         # Create Docker daemon directory if it doesn't exist
@@ -469,69 +472,76 @@ speed_up_mirror() {
         
         echo "Found ${#working_mirrors[@]} working mirrors."
         
-        # Create JSON array structure for registry-mirrors
-        registry_mirrors_json="["
-        for ((i=0; i<${#working_mirrors[@]}; i++)); do
-            registry_mirrors_json+="\"${working_mirrors[$i]}\""
-            if [ $i -lt $((${#working_mirrors[@]}-1)) ]; then
-                registry_mirrors_json+=", "
-            fi
+        # Display tested mirrors
+        echo "Available working mirrors:"
+        for mirror in "${working_mirrors[@]}"; do
+            echo "  - $mirror"
         done
-        registry_mirrors_json+="]"
         
-        # Create configuration file
-        echo "Creating Docker daemon configuration file with working mirrors..."
-        cat > /etc/docker/daemon.json <<EOF
+        # 只有在Docker已安装时才配置
+        if $docker_installed; then
+            # Create JSON array structure for registry-mirrors
+            registry_mirrors_json="["
+            for ((i=0; i<${#working_mirrors[@]}; i++)); do
+                registry_mirrors_json+="\"${working_mirrors[$i]}\""
+                if [ $i -lt $((${#working_mirrors[@]}-1)) ]; then
+                    registry_mirrors_json+=", "
+                fi
+            done
+            registry_mirrors_json+="]"
+            
+            # Create configuration file
+            echo "Creating Docker daemon configuration file with working mirrors..."
+            mkdir -p /etc/docker
+            cat > /etc/docker/daemon.json <<EOF
 {
   "registry-mirrors": $registry_mirrors_json
 }
 EOF
 
-        # Verify file creation
-        if [ ! -f /etc/docker/daemon.json ]; then
-            echo "[ERROR] Failed to create Docker daemon configuration file"
-            return 1
-        fi
-        
-        # Display selected mirrors
-        echo "Selected mirrors:"
-        for mirror in "${working_mirrors[@]}"; do
-            echo "  - $mirror"
-        done
-        
-        # Restart Docker service
-        echo "Restarting Docker service to apply mirror configuration..."
-        if ! systemctl restart docker; then
-            echo "[ERROR] Failed to restart Docker service"
-            journalctl -u docker.service | tail -n 30
-            return 1
-        fi
-        
-        # Verify Docker service is running
-        if ! systemctl is-active docker >/dev/null; then
-            echo "[ERROR] Docker service failed to start after configuration"
-            journalctl -u docker.service | tail -n 30
-            return 1
-        fi
-        
-        # 新增配置验证
-        echo "Verifying configuration reload..."
-        sleep 6  # 等待服务完全启动
-        if ! docker info 2>/dev/null | grep -q "Registry Mirrors"; then
-            echo "[WARN] No registry mirrors detected in Docker config"
-        else
-            echo "[SUCCEED] Docker daemon reloaded configuration successfully"
-            echo "Current registry mirrors:"
-            docker info | grep "Registry Mirrors" -A 10 | sed 's/^/  /'
-        fi
-        
-        echo "[SUCCEED] Docker registry mirrors configured successfully"
+            # Verify file creation
+            if [ ! -f /etc/docker/daemon.json ]; then
+                echo "[ERROR] Failed to create Docker daemon configuration file"
+                return 1
+            fi
+            
+            # Restart Docker service
+            echo "Restarting Docker service to apply mirror configuration..."
+            if ! systemctl restart docker; then
+                echo "[ERROR] Failed to restart Docker service"
+                journalctl -u docker.service | tail -n 30
+                return 1
+            fi
+            
+            # Verify Docker service is running
+            if ! systemctl is-active docker >/dev/null; then
+                echo "[ERROR] Docker service failed to start after configuration"
+                journalctl -u docker.service | tail -n 30
+                return 1
+            fi
+            
+            # 新增配置验证
+            echo "Verifying configuration reload..."
+            sleep 6  # 等待服务完全启动
+            if ! docker info 2>/dev/null | grep -q "Registry Mirrors"; then
+                echo "[WARN] No registry mirrors detected in Docker config"
+            else
+                echo "[SUCCEED] Docker daemon reloaded configuration successfully"
+                echo "Current registry mirrors:"
+                docker info | grep "Registry Mirrors" -A 10 | sed 's/^/  /'
+            fi
+            
+            echo "[SUCCEED] Docker registry mirrors configured successfully"
 
-        # Run test container after installation and configuration
-        echo "Running Docker test..."
-        if ! docker run --rm hello-world; then
-            echo "[ERROR] Docker test failed"
-            return 1
+            # Run test container after installation and configuration
+            echo "Running Docker test..."
+            if ! docker run --rm hello-world; then
+                echo "[ERROR] Docker test failed"
+                return 1
+            fi
+        else
+            echo "[INFO] Mirror test completed. Install Docker to apply these mirrors."
+            echo "[INFO] You can run this script again after installing Docker to configure mirrors."
         fi
 
     } || handle_error "Configure Docker Registry Mirror" "$?"
@@ -719,7 +729,8 @@ main() {
     
     # Initialize variables and log
     ERROR_LOG="$(dirname "$0")/init_error.log"
-    > "$ERROR_LOG"  # Clear error log
+    # Remove old error log if exists
+    rm -f "$ERROR_LOG"
     declare -a FAILED_STEPS=()
     
     
@@ -756,17 +767,15 @@ main() {
     read -p "Do you want to install Docker? (y/n): " docker_choice
     if [[ "$docker_choice" =~ [yY] ]]; then
         install_docker=true
+        steps+=("install_docker")
     fi
 
-    # Docker installation steps
-    if $install_docker; then
-        steps+=("install_docker")
-        
-        # 镜像配置必须在Docker安装之后
-        read -p "Do you want to configure Docker registry mirrors? (y/n): " mirror_choice
-        if [[ "$mirror_choice" =~ [yY] ]]; then
-            steps+=("speed_up_mirror")
-        fi
+    # Ask about Docker mirror configuration (independent of installation)
+    read -p "Do you want to test/configure Docker registry mirrors? (y/n): " mirror_choice
+    if [[ "$mirror_choice" =~ [yY] ]]; then
+        # 如果选择安装Docker，镜像配置必须在Docker安装之后
+        # 如果不安装Docker，则只进行测试
+        steps+=("speed_up_mirror")
     fi
 
     # Execute steps
@@ -796,11 +805,7 @@ main() {
         echo "Please check $ERROR_LOG for detailed error messages"
         exit 1
     else
-        # Clean up empty error log
-        if [ ! -s "$ERROR_LOG" ]; then
-            rm -f "$ERROR_LOG"
-            echo -e "\nNo errors occurred during initialization"
-        fi
+        echo -e "\nNo errors occurred during initialization"
         exit 0
     fi
 }
